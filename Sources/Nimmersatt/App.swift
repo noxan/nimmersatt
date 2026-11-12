@@ -247,7 +247,7 @@ struct Panel: View {
                     .overlay {
                         Text("\(100 - headroom.score)").font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(Headroom.alarm(headroom.score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.primary))
-                            .contentTransition(.numericText(value: Double(100 - headroom.score)))
+                            .contentTransition(.identity)  // digits snap; only the colour eases
                             .animation(Ring.motion, value: headroom.score)
                     }
                     .accessibilityElement()
