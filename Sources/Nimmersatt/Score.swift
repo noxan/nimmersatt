@@ -9,8 +9,8 @@ enum Tuning {
     static let hogDisk = 50e6        // an app is "eating" disk at 50MB/s read + written, smoothed
     static let roomyDiskGB = 40.0    // free space at which the disk scores 100; below, linear to 0
     static let diskSaturation = 4.0  // I/O operations in flight, on average, that count as 100% busy
-    static let diskWeight = 0.5      // disk counts half: alone it can pull the score to 50, not lower
-    static let good = 70, fair = 40  // score bands: calm, orange, red
+    static let diskWeight = 0.6      // disk counts less: alone it can pull the score to 40 (orange), not lower
+    static let good = 50, fair = 25  // score bands: calm, orange (pressure over 50), red (over 75)
     static let idleAppTicks = 5      // while the panel is closed, walk the process list every 5th tick (10s)
     static let diskSpaceTicks = 15   // re-read free disk space every 15th tick (30s)
     static let smoothing = 0.3       // weight of the newest 2s sample (about a 6s time constant)
@@ -111,23 +111,27 @@ extension Headroom {
         score >= Tuning.good ? nil : score >= Tuning.fair ? .systemOrange : .systemRed
     }
 
-    /// A ring filled to the score: full means all the room is left. It drains clockwise from
-    /// 12 o'clock as headroom runs out, like a countdown; what remains ends at 12. Used as the menu bar icon and in the panel. A template image while calm, so it takes the surrounding default colour.
+    /// A ring that fills with pressure (100 - score), counter-clockwise from 12 o'clock, so the worse
+    /// things get the more ink it shows: calm is a thin faint track, overload a thick full
+    /// red ring. `stroke` is the nominal width; it scales 0.6x to 1.4x with pressure.
+    /// Used as the menu bar icon and in the panel. A template image while calm, so it takes
+    /// the surrounding default colour.
     static func ring(_ score: Int, size: CGFloat = 16, stroke: CGFloat = 2.5) -> NSImage {
-        let color = alarm(score), fill = Double(score) / 100
-        let radius = (size - stroke) / 2 - 0.75
+        let color = alarm(score), pressure = Double(100 - score) / 100
+        let width = stroke * (0.6 + 0.8 * pressure)
+        let radius = (size - stroke * 1.4) / 2 - 0.75  // room for the widest stroke
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let ink = color ?? .black
             let center = NSPoint(x: rect.midX, y: rect.midY)
             let track = NSBezierPath()
             track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
-            track.lineWidth = stroke
-            ink.withAlphaComponent(0.3).setStroke()
+            track.lineWidth = width
+            ink.withAlphaComponent(color == nil ? 0.3 : 0.5).setStroke()
             track.stroke()
-            if fill > 0 {
+            if pressure > 0 {
                 let arc = NSBezierPath()
-                arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 + 360 * fill, clockwise: false)
-                arc.lineWidth = stroke
+                arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 + 360 * pressure, clockwise: false)
+                arc.lineWidth = width
                 arc.lineCapStyle = .round
                 ink.setStroke()
                 arc.stroke()

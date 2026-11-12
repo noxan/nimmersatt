@@ -27,8 +27,8 @@ enum Main {
         precondition(idle.culprits.isEmpty && idle.verdict == "All clear", "no culprit when calm")
         let hog = Snapshot(apps: [AppUsage(id: "a", name: "A", cpu: 150)], headroom: calm)
         precondition(hog.culprits.map(\.id) == ["a"], "full core is a culprit")
-        let both = Headroom(load: 50, memoryFree: 60, memoryPressure: 2, thermalState: .nominal)
-        precondition(both.cpu == 50 && both.memory == 40 && both.score == 29, "two strained contributors compound")
+        let both = Headroom(load: 55, memoryFree: 60, memoryPressure: 2, thermalState: .nominal)
+        precondition(both.cpu == 45 && both.memory == 40 && both.score == 36, "two strained contributors compound")
         precondition(Snapshot(headroom: both).verdict == "Memory and CPU under pressure", "compound verdict")
         let resting = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, gpuBusy: 30)
         precondition(resting.gpu == 100, "resting gpu is free")
@@ -40,7 +40,7 @@ enum Main {
                                 swapUsed: ProcessInfo.processInfo.physicalMemory / 2)
         precondition(swapping.memory == 50 && swapping.weakest == "Memory", "swap lowers memory")
         let full = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, diskFreeGB: 0)
-        precondition(full.disk == 0 && full.score == 50 && full.weakest == "Disk", "full disk counts half")
+        precondition(full.disk == 0 && full.score == 40 && full.weakest == "Disk", "full disk counts less")
         precondition(Snapshot(headroom: full).verdict == "Disk is almost full", "full disk verdict")
         let thrash = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, diskBusy: 100)
         precondition(thrash.disk == 0 && Snapshot(headroom: thrash).verdict == "Disk is busy", "busy disk")
@@ -83,7 +83,11 @@ enum Main {
         _ = sampler.apps()
         _ = sampler.system()
         sleep(1)
-        let state = Snapshot(apps: sampler.apps(), headroom: .now(sampler.system(), diskFreeGB: Headroom.diskFreeGB()))
+        var state = Snapshot(apps: sampler.apps(), headroom: .now(sampler.system(), diskFreeGB: Headroom.diskFreeGB()))
+        // `--load N` fakes the CPU load, to review the rings at any pressure.
+        if let i = CommandLine.arguments.firstIndex(of: "--load"), let load = Double(CommandLine.arguments[i + 1]) {
+            state.headroom = Headroom(load: load, memoryFree: 60, memoryPressure: 1, thermalState: .nominal)
+        }
         let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
         renderer.scale = 2
         let tiff = renderer.nsImage!.tiffRepresentation!
@@ -176,10 +180,10 @@ struct NimmersattApp: App {
         MenuBarExtra {
             PanelHost(model: model)
         } label: {
-            // Headroom ring: full and default colour while calm; empties, orange then red, as room runs out.
+            // Pressure ring: faint and default colour while calm; fills and thickens, orange then red, as room runs out.
             // Reads only ringScore, so panel data changes do not redraw the status item.
             Image(nsImage: Headroom.ring(model.ringScore))
-                .accessibilityLabel("Headroom \(model.ringScore) of 100")
+                .accessibilityLabel("Pressure \(100 - model.ringScore) of 100")
         }
         .menuBarExtraStyle(.window)  // the system supplies the panel's glass; content adds no material
     }
@@ -240,11 +244,14 @@ struct Panel: View {
             // beside it; the three contributors follow as smaller rings of the same shape.
             HStack(spacing: 12) {
                 Image(nsImage: Headroom.ring(headroom.score, size: 56, stroke: 5))
-                    .overlay { Text("\(headroom.score)").font(.system(size: 20, weight: .semibold)) }
+                    .overlay {
+                        Text("\(100 - headroom.score)").font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(Headroom.alarm(headroom.score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.primary))
+                    }
                     .accessibilityElement()
-                    .accessibilityLabel("Headroom \(headroom.score) of 100")
+                    .accessibilityLabel("Pressure \(100 - headroom.score) of 100")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Headroom").fontWeight(.bold)
+                    Text("Pressure").fontWeight(.bold)
                     Text(state.verdict).foregroundStyle(.secondary)
                 }
             }
@@ -301,7 +308,11 @@ struct Panel: View {
 
     private func contributor(_ symbol: String, _ score: Int, _ fact: String) -> some View {
         Image(nsImage: Headroom.ring(score, size: 28, stroke: 2.5))
-            .overlay { Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(.secondary) }
+            .overlay {
+                // The glyph takes the alarm colour too, so the eye lands on what hurts.
+                Image(systemName: symbol).font(.system(size: 11))
+                    .foregroundStyle(Headroom.alarm(score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.secondary))
+            }
             .frame(maxWidth: .infinity)
             .help(fact)
             .accessibilityElement()
