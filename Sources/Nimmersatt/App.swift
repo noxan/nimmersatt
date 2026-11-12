@@ -24,6 +24,16 @@ enum Main {
         precondition(idle.culprits.isEmpty && idle.verdict == "All clear", "no culprit when calm")
         let hog = Snapshot(apps: [AppUsage(id: "a", name: "A", cpu: 150)], headroom: calm)
         precondition(hog.culprits.map(\.id) == ["a"], "full core is a culprit")
+        let swapping = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal,
+                                swapUsed: ProcessInfo.processInfo.physicalMemory / 2)
+        precondition(swapping.memory == 50 && swapping.weakest == "Memory", "swap lowers memory")
+        let full = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, diskFreeGB: 0)
+        precondition(full.disk == 0 && full.score == 50 && full.weakest == "Disk", "full disk counts half")
+        precondition(Snapshot(headroom: full).verdict == "Disk is almost full", "full disk verdict")
+        let thrash = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, diskBusy: 100)
+        precondition(thrash.disk == 0 && Snapshot(headroom: thrash).verdict == "Disk is busy", "busy disk")
+        let writer = Snapshot(apps: [AppUsage(id: "a", name: "A", disk: 100e6)], headroom: calm)
+        precondition(writer.culprits.map(\.value) == ["100 MB/s"], "disk hog is a culprit")
         let tight = Snapshot(apps: [AppUsage(id: "a", name: "A", memory: 1 << 30)], headroom: squeezed)
         precondition(tight.culprits.map(\.id) == ["a"], "tight memory names the biggest app")
 
@@ -42,8 +52,11 @@ enum Main {
             let mem = app.memory.formatted(.byteCount(style: .memory))
             print(cpu, mem.padding(toLength: 10, withPad: " ", startingAt: 0), app.name, app.busiest)
         }
-        let now = Headroom.now(load: total / cores)
-        print("ok: \(apps.count) groups, \(Int(total))% of \(Int(cores * 100))%, headroom \(now.score)", now.contributors)
+        let now = Headroom.now(load: total / cores, diskBusy: sampler.diskBusy)
+        precondition(now.diskFreeGB > 0 && now.diskFreeGB < 1000, "disk space not read")
+        print("ok: \(apps.count) groups, \(Int(total))% of \(Int(cores * 100))%, headroom \(now.score)",
+              now.contributors.map { "\($0.name) \($0.score)" },
+              "disk \(Int(now.diskFreeGB))GB free, \(Int(now.diskBusy))% busy, swap \(now.swapUsed >> 20)MB")
     }
 
     // Renders the panel with live data to a PNG, to review layout without clicking the menu bar.
@@ -53,7 +66,7 @@ enum Main {
         sleep(1)
         let apps = sampler.sample()
         let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
-        let state = Snapshot(apps: apps, headroom: .now(load: load))
+        let state = Snapshot(apps: apps, headroom: .now(load: load, diskBusy: sampler.diskBusy))
         let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
         renderer.scale = 2
         let tiff = renderer.nsImage!.tiffRepresentation!
@@ -66,7 +79,9 @@ enum Main {
 final class Model {
     var state = Snapshot()
     private let sampler = Sampler()
-    private var smoothed: [String: Double] = [:]  // touched only on the timer queue
+    // Smoothing state, touched only on the timer queue.
+    private var smoothed: [String: (cpu: Double, disk: Double)] = [:]
+    private var diskBusy = 0.0
     private let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
 
     init() {
@@ -79,17 +94,20 @@ final class Model {
         timer.resume()
     }
 
-    // Smooths per-app CPU so a 2s spike neither names a culprit nor moves the score.
+    // Smooths CPU and disk rates so a 2s spike neither names a culprit nor moves the score.
     private func tick() -> Snapshot {
         var apps = sampler.sample()
+        let w = Tuning.smoothing
         for i in apps.indices {
             if let old = smoothed[apps[i].id] {
-                apps[i].cpu = old * (1 - Tuning.smoothing) + apps[i].cpu * Tuning.smoothing
+                apps[i].cpu = old.cpu * (1 - w) + apps[i].cpu * w
+                apps[i].disk = old.disk * (1 - w) + apps[i].disk * w
             }
         }
-        smoothed = Dictionary(apps.map { ($0.id, $0.cpu) }, uniquingKeysWith: { a, _ in a })
+        smoothed = Dictionary(apps.map { ($0.id, ($0.cpu, $0.disk)) }, uniquingKeysWith: { a, _ in a })
+        diskBusy = diskBusy * (1 - w) + sampler.diskBusy * w
         let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
-        return Snapshot(apps: apps, headroom: .now(load: load))
+        return Snapshot(apps: apps, headroom: .now(load: load, diskBusy: diskBusy))
     }
 }
 
@@ -161,9 +179,12 @@ struct Panel: View {
             // One ring per contributor, its glyph inside. Facts are in the tooltip.
             HStack(spacing: 0) {
                 contributor("cpu", headroom.cpu, "CPU: \(Int(headroom.load))% of all cores busy")
-                contributor("memorychip", headroom.memory, "Memory: \(headroom.memoryFree)% free")
+                contributor("memorychip", headroom.memory,
+                            "Memory: \(headroom.memoryFree)% free, \(headroom.swapUsed.formatted(.byteCount(style: .memory))) swap")
                 contributor("thermometer.medium", headroom.thermal,
                             "Thermal: " + ["nominal", "fair", "serious", "critical"][headroom.thermalState.rawValue])
+                contributor("internaldrive", headroom.disk,
+                            "Disk: \(Int(headroom.diskFreeGB)) GB free, \(Int(headroom.diskBusy))% busy")
             }
             .padding(.vertical, 12)
 

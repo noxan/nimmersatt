@@ -4,25 +4,35 @@ import AppKit
 enum Tuning {
     static let hogCPU = 100.0        // an app is "eating" CPU at one full core, smoothed
     static let tightMemory = 50      // below this memory headroom, name the biggest apps
+    static let hogDisk = 50e6        // an app is "eating" disk at 50MB/s read + written, smoothed
+    static let roomyDiskGB = 40.0    // free space at which the disk scores 100; below, linear to 0
+    static let diskSaturation = 4.0  // I/O operations in flight, on average, that count as 100% busy
+    static let diskWeight = 0.5      // disk counts half: alone it can pull the score to 50, not lower
     static let good = 70, fair = 40  // score bands: calm, orange, red
     static let smoothing = 0.3       // weight of the newest 2s sample (about a 6s time constant)
 }
 
 /// One number, 0 to 100, higher is better: how much room the Mac has left.
-/// It is the weakest of three contributors, because a bottleneck is not averaged away.
+/// It is the weakest of its contributors, because a bottleneck is not averaged away.
+/// Disk counts at reduced weight (see Tuning.diskWeight).
 struct Headroom {
     let load: Double        // percent of all cores in use
     let memoryFree: Int     // kernel's free-memory percentage
     let memoryPressure: Int // kernel's pressure level: 1 normal, 2 warning, 4 critical
     let thermalState: ProcessInfo.ThermalState
+    var swapUsed: UInt64 = 0 // bytes of swap in use
+    var diskFreeGB = 1000.0 // free space on the boot volume, as Finder counts it
+    var diskBusy = 0.0      // percent of time the disks spent serving I/O
 
     var cpu: Int { Int(max(0, min(100, 100 - load))) }
 
     // Half the memory free is a healthy Mac (macOS fills RAM on purpose), so 50% free scores 100.
-    // The kernel's own pressure level then caps the score.
+    // The kernel's own pressure level then caps the score, and so does swap: swap in use
+    // means RAM was overcommitted, scored against physical memory (half of RAM swapped = 50).
     var memory: Int {
         let cap = memoryPressure >= 4 ? 15 : memoryPressure >= 2 ? 40 : 100
-        return max(0, min(cap, memoryFree * 2))
+        let swapShare = Double(swapUsed) / Double(ProcessInfo.processInfo.physicalMemory)
+        return max(0, min(cap, memoryFree * 2, Int(100 - swapShare * 100)))
     }
 
     var thermal: Int {
@@ -34,15 +44,32 @@ struct Headroom {
         }
     }
 
-    var contributors: [(name: String, score: Int)] { [("CPU", cpu), ("Memory", memory), ("Thermal", thermal)] }
-    var score: Int { contributors.map(\.score).min()! }
-    var weakest: String { contributors.min { $0.score < $1.score }!.name }
+    // Disk is the worse of space and activity: a full disk starves swap, a busy one stalls everything.
+    var diskSpace: Int { Int(max(0, min(100, diskFreeGB / Tuning.roomyDiskGB * 100))) }
+    var diskIdle: Int { Int(max(0, min(100, 100 - diskBusy))) }
+    var disk: Int { min(diskSpace, diskIdle) }
 
-    static func now(load: Double) -> Headroom {
-        Headroom(load: load,
-                 memoryFree: sysctlInt("kern.memorystatus_level") ?? 100,
-                 memoryPressure: sysctlInt("kern.memorystatus_vm_pressure_level") ?? 1,
-                 thermalState: ProcessInfo.processInfo.thermalState)
+    var contributors: [(name: String, score: Int, weight: Double)] {
+        [("CPU", cpu, 1), ("Memory", memory, 1), ("Thermal", thermal, 1), ("Disk", disk, Tuning.diskWeight)]
+    }
+    private static func weighted(_ c: (name: String, score: Int, weight: Double)) -> Int {
+        100 - Int((Double(100 - c.score) * c.weight).rounded())
+    }
+    var score: Int { contributors.map(Self.weighted).min()! }
+    var weakest: String { contributors.min { Self.weighted($0) < Self.weighted($1) }!.name }
+
+    static func now(load: Double, diskBusy: Double) -> Headroom {
+        var swap = xsw_usage()
+        var size = MemoryLayout<xsw_usage>.size
+        sysctlbyname("vm.swapusage", &swap, &size, nil, 0)
+        let volume = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return Headroom(load: load,
+                        memoryFree: sysctlInt("kern.memorystatus_level") ?? 100,
+                        memoryPressure: sysctlInt("kern.memorystatus_vm_pressure_level") ?? 1,
+                        thermalState: ProcessInfo.processInfo.thermalState,
+                        swapUsed: swap.xsu_used,
+                        diskFreeGB: (volume?.volumeAvailableCapacityForImportantUsage).map { Double($0) / 1e9 } ?? 1000,
+                        diskBusy: diskBusy)
     }
 
     private static func sysctlInt(_ name: String) -> Int? {
@@ -96,17 +123,21 @@ struct Snapshot {
     var apps: [AppUsage] = []
     var headroom = Headroom(load: 0, memoryFree: 100, memoryPressure: 1, thermalState: .nominal)
 
-    /// Apps worth naming: anything holding a full core, plus the biggest apps when memory is tight.
+    /// Apps worth naming: anything holding a full core or hammering the disk, plus the
+    /// biggest apps when memory is tight. Each app is listed once, under its first reason.
     var culprits: [Culprit] {
         var out = apps.filter { $0.cpu >= Tuning.hogCPU }
             .sorted { $0.cpu > $1.cpu }
             .map { Culprit(app: $0, value: "\(Int($0.cpu))%") }
+        out += apps.filter { $0.disk >= Tuning.hogDisk }
+            .sorted { $0.disk > $1.disk }
+            .map { Culprit(app: $0, value: Int64($0.disk).formatted(.byteCount(style: .file)) + "/s") }
         if headroom.memory < Tuning.tightMemory {
             out += apps.sorted { $0.memory > $1.memory }.prefix(3)
-                .filter { app in !out.contains { $0.id == app.id } }
                 .map { Culprit(app: $0, value: $0.memory.formatted(.byteCount(style: .memory))) }
         }
-        return out
+        var seen = Set<String>()
+        return out.filter { seen.insert($0.id).inserted }
     }
 
     var verdict: String {
@@ -117,6 +148,7 @@ struct Snapshot {
         switch headroom.weakest {
         case "CPU": return "Busy across many apps"
         case "Memory": return "Memory is getting tight"
+        case "Disk": return headroom.diskSpace < headroom.diskIdle ? "Disk is almost full" : "Disk is busy"
         default: return "Running hot"
         }
     }
