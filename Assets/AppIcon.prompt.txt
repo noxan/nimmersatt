@@ -1,5 +1,4 @@
-Use case: stylized-concept
-Asset type: production macOS app icon, square 1024x1024 PNG with transparent outside the icon tile.
-Primary request: liquid glass design app icon for Nimmersatt, a lightweight system pressure monitor whose visual identity is a pressure ring.
-Subject: one bold sculptural liquid-glass circular ring, slightly open at the top, with rounded liquid ends, subtle fluid asymmetry, luminous translucent glass refraction and glossy highlights. Simple silhouette legible at 32 pixels. Centered on a softly rounded square frosted glass tile, comfortably inset within the canvas with transparent outer corners and subtle shadow. Polished native macOS aesthetic. Cool glass with gentle spectral refractions, restrained saturated accents in the ring, calm clean tile.
-Composition: straight-on orthographic app icon, centered, generous breathing room; ring is the sole symbol. No text, numbers, extra symbols, borders, mockup, device or scenery. Actual final icon artwork only.
+Generated with built-in image generation. Selected variant: 06-arctic.
+Source: exec-b1623239-65f0-4e95-ad96-b390308158fa.png
+
+Use case: stylized-concept. Create one finished production macOS app icon for Nimmersatt, a system pressure monitor. Square canvas, softly rounded-square tile inset within canvas, transparent outside tile. Sole symbol: a precise perfectly circular pressure indicator with a continuous subdued track and a bright rounded-cap partial arc on the SAME radius, large empty center. No wobble, no organic bulges, no text, no numbers, no needles, no tick marks or extra symbols. Front-on, highly recognizable at 26px. Refined liquid glass, vivid contrast, expressive yet simple. Saturated cobalt blue tile with a subtle softly lit bevel. Frosted icy-blue glass circular track, brilliant white-to-cyan active arc covering the upper left third. Tactile smooth translucent glass, sharp contrast, refined precision.

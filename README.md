@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Assets/AppIcon.png" width="128" alt="nimmersatt app icon">
+  <img src="Assets/AppIcon-preview.png" width="128" alt="nimmersatt app icon">
 </p>
 
 <h1 align="center">nimmersatt</h1>
@@ -24,7 +24,7 @@ requires macos 14 or later.
 
 download `Nimmersatt-<version>.zip` from [releases](https://github.com/noxan/nimmersatt/releases), unzip and open `Nimmersatt.app`. the build is ad-hoc signed, so the first launch needs right-click, open.
 
-or build from source:
+or build from source with Xcode 26 or later installed (the icon build uses `actool`):
 
 ```sh
 make app && open Nimmersatt.app

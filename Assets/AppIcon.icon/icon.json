@@ -1,0 +1,15 @@
+{
+  "fill": { "solid": "srgb:0.00000,0.18000,0.95000,1.00000" },
+  "groups": [{
+    "layers": [{
+      "image-name": "AppIcon.png",
+      "name": "Artwork",
+      "glass": false,
+      "position": { "scale": 0.95, "translation-in-points": [0, 0] }
+    }],
+    "shadow": { "kind": "neutral", "opacity": 0 },
+    "specular": false,
+    "translucency": { "enabled": false, "value": 0 }
+  }],
+  "supported-platforms": { "squares": ["macOS"] }
+}
