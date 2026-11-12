@@ -60,7 +60,7 @@ struct Headroom {
     var gpu: Int { Int(max(0, min(100, 100 - (gpuBusy - Tuning.gpuIdle) / (100 - Tuning.gpuIdle) * 100))) }
 
     var contributors: [(name: String, score: Int, weight: Double)] {
-        [("CPU", cpu, 1), ("GPU", gpu, 1), ("Memory", memory, 1), ("Thermal", thermal, 1),
+        [("CPU", cpu, 1), ("Memory", memory, 1), ("GPU", gpu, 1), ("Thermal", thermal, 1),
          ("Disk", disk, Tuning.diskWeight)]
     }
     private static func weighted(_ c: (name: String, score: Int, weight: Double)) -> Int {

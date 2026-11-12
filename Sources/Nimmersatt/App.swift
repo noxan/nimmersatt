@@ -262,9 +262,9 @@ struct Panel: View {
             // One ring per contributor, its glyph inside. Facts are in the tooltip.
             HStack(spacing: 0) {
                 contributor("cpu", headroom.cpu, "CPU: \(Int(headroom.load))% of all cores busy")
-                contributor("display", headroom.gpu, "GPU: \(Int(headroom.gpuBusy))% busy")
                 contributor("memorychip", headroom.memory,
                             "Memory: \(headroom.memoryFree)% free, \(headroom.swapUsed.formatted(.byteCount(style: .memory))) swap")
+                contributor("display", headroom.gpu, "GPU: \(Int(headroom.gpuBusy))% busy")
                 contributor("thermometer.medium", headroom.thermal,
                             "Thermal: " + ["nominal", "fair", "serious", "critical"][headroom.thermalState.rawValue])
                 contributor("internaldrive", headroom.disk,
