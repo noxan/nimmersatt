@@ -88,7 +88,9 @@ enum Main {
         if let i = CommandLine.arguments.firstIndex(of: "--load"), let load = Double(CommandLine.arguments[i + 1]) {
             state.headroom = Headroom(load: load, memoryFree: 60, memoryPressure: 1, thermalState: .nominal)
         }
-        let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
+        var content = AnyView(Panel(state: state, expanded: expanded).background(.background))
+        if CommandLine.arguments.contains("--demo") { content = AnyView(demo()) }
+        let renderer = ImageRenderer(content: content)
         renderer.scale = 2
         // Redrawn into 8-bit sRGB: on an HDR display the render comes back as 16-bit PQ, which
         // browsers and image viewers show washed out.
@@ -99,6 +101,41 @@ enum Main {
         context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
         let png = NSBitmapImageRep(cgImage: context.makeImage()!).representation(using: .png, properties: [:])!
         try! png.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+extension Main {
+    // `--snapshot path --demo`: the README screenshot. Mocked data, a calm Mac beside an
+    // overloaded one, on a transparent canvas so it sits on light and dark pages alike.
+    @MainActor static func demo() -> some View {
+        func app(_ path: String, cpu: Double, gb: Double, busiest: String = "") -> AppUsage {
+            let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            return AppUsage(id: name, name: name, icon: NSWorkspace.shared.icon(forFile: URL(fileURLWithPath: path).resolvingSymlinksInPath().path), cpu: cpu,
+                            memory: UInt64(gb * 1_073_741_824), busiest: busiest, busiestCPU: busiest.isEmpty ? 0 : cpu)
+        }
+        let apps = [app("/Applications/Xcode.app", cpu: 412, gb: 6.2, busiest: "swift-frontend"),
+                    app("/Applications/Safari.app", cpu: 38, gb: 3.4, busiest: "Web Content"),
+                    app("/System/Applications/Photos.app", cpu: 21, gb: 1.9),
+                    app("/System/Applications/Music.app", cpu: 6, gb: 0.6),
+                    app("/System/Applications/Mail.app", cpu: 3, gb: 0.4)]
+        let calm = Snapshot(headroom: Headroom(load: 12, memoryFree: 62, memoryPressure: 1, thermalState: .nominal,
+                                               diskFreeGB: 200, diskBusy: 4, gpuBusy: 34))
+        let busy = Snapshot(apps: apps, headroom: Headroom(load: 68, memoryFree: 35, memoryPressure: 1, thermalState: .fair,
+                                                           diskFreeGB: 200, diskBusy: 22, gpuBusy: 55))
+        let hot = Snapshot(headroom: Headroom(load: 82, memoryFree: 30, memoryPressure: 2, thermalState: .fair,
+                                              diskFreeGB: 200, diskBusy: 30, gpuBusy: 40))
+        func card(_ state: Snapshot) -> some View {
+            Panel(state: state, expanded: !state.apps.isEmpty)
+                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.15)))
+                .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
+        }
+        return HStack(spacing: 28) {
+            VStack(spacing: 28) { card(calm); card(hot) }
+            card(busy)
+        }
+        .padding(36)
+        .environment(\.colorScheme, .dark)
     }
 }
 

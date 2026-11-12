@@ -17,7 +17,10 @@ app: .build/AppIcon.icns
 check:
 	swift run -c release Nimmersatt --check
 
-.PHONY: app check release
+screenshot:
+	swift run -c release Nimmersatt --snapshot Assets/screenshot.png --demo
+
+.PHONY: app check release screenshot
 
 release:
 	./release.sh
