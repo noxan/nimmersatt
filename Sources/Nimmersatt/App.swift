@@ -161,7 +161,7 @@ final class Model {
 
     init() {
         timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: 2.0)
+        timer.schedule(deadline: .now(), repeating: 2.0, leeway: .milliseconds(500))  // lets the system batch wakeups
         timer.setEventHandler { [weak self] in self?.publish() }
         timer.resume()
     }
