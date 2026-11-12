@@ -143,9 +143,9 @@ extension Main {
 final class Model {
     /// For the panel. Refreshed every tick while it is open, else with each process walk.
     var state = Snapshot()
-    /// For the menu bar ring, in steps of 5: a 16pt ring cannot show less, and redrawing the
-    /// status item is the app's main idle cost. Both colour thresholds are multiples of 5,
-    /// so rounding down never shows the wrong colour.
+    /// For the menu bar ring. Redrawing the status item is the app's main idle cost, so it
+    /// follows the score only on a colour change or a move of 5 or more: an 18pt ring cannot
+    /// show less, and a score hovering around one value never redraws.
     var ringScore = 100
 
     // Everything below is touched only on `queue`.
@@ -178,9 +178,11 @@ final class Model {
     private func publish() {
         let state = tick()
         let showState = panelOpen || lastAppsTick == ticks
-        let step = state.headroom.score / 5 * 5
+        let score = state.headroom.score
         DispatchQueue.main.async {
-            if step != self.ringScore { self.ringScore = step }  // assigning an equal value still redraws
+            if Headroom.alarm(score) != Headroom.alarm(self.ringScore) || abs(score - self.ringScore) >= 5 {
+                self.ringScore = score
+            }
             if showState { self.state = state }
         }
     }
