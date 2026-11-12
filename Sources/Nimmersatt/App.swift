@@ -243,10 +243,12 @@ struct Panel: View {
             // Hierarchy: the score is the hero (large ring, number inside), named and explained
             // beside it; the three contributors follow as smaller rings of the same shape.
             HStack(spacing: 12) {
-                Image(nsImage: Headroom.ring(headroom.score, size: 56, stroke: 5))
+                Ring(score: headroom.score, size: 56, stroke: 5)
                     .overlay {
                         Text("\(100 - headroom.score)").font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(Headroom.alarm(headroom.score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.primary))
+                            .contentTransition(.numericText(value: Double(100 - headroom.score)))
+                            .animation(Ring.motion, value: headroom.score)
                     }
                     .accessibilityElement()
                     .accessibilityLabel("Pressure \(100 - headroom.score) of 100")
@@ -307,11 +309,12 @@ struct Panel: View {
     }
 
     private func contributor(_ symbol: String, _ score: Int, _ fact: String) -> some View {
-        Image(nsImage: Headroom.ring(score, size: 28, stroke: 2.5))
+        Ring(score: score, size: 28, stroke: 2.5)
             .overlay {
                 // The glyph takes the alarm colour too, so the eye lands on what hurts.
                 Image(systemName: symbol).font(.system(size: 11))
                     .foregroundStyle(Headroom.alarm(score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.secondary))
+                    .animation(Ring.motion, value: score)
             }
             .frame(maxWidth: .infinity)
             .help(fact)
@@ -328,6 +331,33 @@ struct Panel: View {
             .padding(.top, 8)
             .padding(.bottom, 2)
         rows()
+    }
+}
+
+/// The panel's ring: same geometry as `Headroom.ring` (the menu bar image), drawn as shapes
+/// so arc, width and colour animate between samples.
+struct Ring: View {
+    static let motion = Animation.smooth(duration: 0.3)  // ponytail: feel knob; samples arrive every 2s
+    let score: Int
+    let size: CGFloat
+    let stroke: CGFloat
+
+    var body: some View {
+        let pressure = Double(100 - score) / 100
+        let alarm = Headroom.alarm(score)
+        let ink = alarm.map { Color(nsColor: $0) } ?? .primary
+        let width = stroke * (0.6 + 0.8 * pressure)
+        let diameter = size - stroke * 1.4 - 1.5
+        ZStack {
+            Circle().stroke(ink.opacity(alarm == nil ? 0.3 : 0.5), lineWidth: width)
+            Circle().trim(from: 0, to: pressure)
+                .stroke(ink, style: StrokeStyle(lineWidth: width, lineCap: .round))
+                .rotationEffect(.degrees(-90))  // start at 12 o'clock
+                .scaleEffect(x: -1)             // run counter-clockwise
+        }
+        .frame(width: diameter, height: diameter)
+        .frame(width: size, height: size)
+        .animation(Self.motion, value: score)
     }
 }
 
