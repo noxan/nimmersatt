@@ -8,4 +8,7 @@ app:
 check:
 	swift run -c release Nimmersatt --check
 
-.PHONY: app check
+.PHONY: app check release
+
+release:
+	./release.sh
