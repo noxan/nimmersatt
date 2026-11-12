@@ -117,7 +117,8 @@ extension Headroom {
     /// The menu bar icon; the panel draws the same idea as shapes (`Ring`). A template image
     /// while calm, so it takes the surrounding default colour. Sized and weighted like the
     /// system's own status icons: the outer edge is fixed and the stroke grows inward.
-    /// Red escalates once more: the core fills in, so it reads as a solid alarm at a glance.
+    /// Alarm escalates once more: a core dot appears with orange and grows with pressure, and
+    /// red fills the core completely, so it reads as a solid alarm at a glance.
     static func ring(_ score: Int, size: CGFloat = 18, stroke: CGFloat = 3) -> NSImage {
         let color = alarm(score), pressure = Double(100 - score) / 100
         let width = stroke * (0.6 + 0.8 * pressure)
@@ -138,8 +139,10 @@ extension Headroom {
                 ink.setStroke()
                 arc.stroke()
             }
-            if score < Tuning.fair {
-                let core = radius - width / 2 - 1.5
+            if color != nil {
+                // Orange: 30% of the full core at pressure 50, 80% at 75. Red: all of it.
+                let orange = 0.3 + 0.5 * (pressure - 0.5) / 0.25
+                let core = (radius - width / 2 - 1.5) * (score < Tuning.fair ? 1 : orange)
                 ink.setFill()
                 NSBezierPath(ovalIn: NSRect(x: center.x - core, y: center.y - core, width: core * 2, height: core * 2)).fill()
             }
