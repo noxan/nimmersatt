@@ -104,12 +104,9 @@ struct NimmersattApp: App {
                 .background(GeometryReader { geo in WindowFit(height: geo.size.height) })
                 .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
         } label: {
-            // Quiet icon by default; the culprit's name only while something is eating resources.
-            if let culprit = model.state.culprits.first {
-                Text("\(culprit.app.name) \(culprit.value)")
-            } else {
-                Image(systemName: "gauge.with.needle")
-            }
+            // Pressure ring: default colour while calm, orange then red as headroom runs out.
+            Image(nsImage: model.state.headroom.icon)
+                .accessibilityLabel("Headroom \(model.state.headroom.score) of 100")
         }
         .menuBarExtraStyle(.window)  // the system supplies the panel's glass; content adds no material
     }
@@ -156,7 +153,7 @@ struct Panel: View {
                 .overlay(alignment: .leading) {
                     GeometryReader { geo in
                         Capsule()
-                            .fill(headroom.score >= Tuning.good ? .green : headroom.score >= Tuning.fair ? .yellow : .red)
+                            .fill(headroom.alarm.map { Color(nsColor: $0) } ?? .green)
                             .frame(width: geo.size.width * Double(headroom.score) / 100)
                     }
                 }

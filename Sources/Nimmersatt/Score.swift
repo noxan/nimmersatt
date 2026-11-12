@@ -1,10 +1,10 @@
-import Foundation
+import AppKit
 
 // ponytail: calibration knobs. Every threshold here is a judgment call; tune against real use.
 enum Tuning {
     static let hogCPU = 100.0        // an app is "eating" CPU at one full core, smoothed
     static let tightMemory = 50      // below this memory headroom, name the biggest apps
-    static let good = 70, fair = 40  // score bands: green, yellow, red
+    static let good = 70, fair = 40  // score bands: calm, orange, red
     static let smoothing = 0.3       // weight of the newest 2s sample (about a 6s time constant)
 }
 
@@ -49,6 +49,37 @@ struct Headroom {
         var value: Int32 = 0
         var size = MemoryLayout<Int32>.size
         return sysctlbyname(name, &value, &size, nil, 0) == 0 ? Int(value) : nil
+    }
+}
+
+extension Headroom {
+    /// nil while there is room (stay quiet, default colour), orange for warning, red for critical.
+    var alarm: NSColor? { score >= Tuning.good ? nil : score >= Tuning.fair ? .systemOrange : .systemRed }
+
+    /// Menu bar icon: a ring that fills clockwise with pressure (100 - score).
+    /// A template image while calm, so the system tints it like every other menu bar icon.
+    var icon: NSImage {
+        let alarm = alarm, pressure = Double(100 - score) / 100
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            let ink = alarm ?? .black
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            let track = NSBezierPath()
+            track.appendArc(withCenter: center, radius: 6, startAngle: 0, endAngle: 360)
+            track.lineWidth = 2.5
+            ink.withAlphaComponent(0.3).setStroke()
+            track.stroke()
+            if pressure > 0 {
+                let arc = NSBezierPath()
+                arc.appendArc(withCenter: center, radius: 6, startAngle: 90, endAngle: 90 - 360 * pressure, clockwise: true)
+                arc.lineWidth = 2.5
+                arc.lineCapStyle = .round
+                ink.setStroke()
+                arc.stroke()
+            }
+            return true
+        }
+        image.isTemplate = alarm == nil
+        return image
     }
 }
 
