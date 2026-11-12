@@ -90,8 +90,14 @@ enum Main {
         }
         let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
         renderer.scale = 2
-        let tiff = renderer.nsImage!.tiffRepresentation!
-        let png = NSBitmapImageRep(data: tiff)!.representation(using: .png, properties: [:])!
+        // Redrawn into 8-bit sRGB: on an HDR display the render comes back as 16-bit PQ, which
+        // browsers and image viewers show washed out.
+        let cg = renderer.cgImage!
+        let context = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        let png = NSBitmapImageRep(cgImage: context.makeImage()!).representation(using: .png, properties: [:])!
         try! png.write(to: URL(fileURLWithPath: path))
     }
 }
