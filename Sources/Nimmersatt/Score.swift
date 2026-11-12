@@ -114,19 +114,21 @@ extension Headroom {
     /// A ring that fills with pressure (100 - score), counter-clockwise from 12 o'clock, so the worse
     /// things get the more ink it shows: calm is a thin faint track, overload a thick full
     /// red ring. `stroke` is the nominal width; it scales 0.6x to 1.4x with pressure.
-    /// Used as the menu bar icon and in the panel. A template image while calm, so it takes
-    /// the surrounding default colour.
-    static func ring(_ score: Int, size: CGFloat = 16, stroke: CGFloat = 2.5) -> NSImage {
+    /// The menu bar icon; the panel draws the same idea as shapes (`Ring`). A template image
+    /// while calm, so it takes the surrounding default colour. Sized and weighted like the
+    /// system's own status icons: the outer edge is fixed and the stroke grows inward.
+    /// Red escalates once more: the core fills in, so it reads as a solid alarm at a glance.
+    static func ring(_ score: Int, size: CGFloat = 18, stroke: CGFloat = 3) -> NSImage {
         let color = alarm(score), pressure = Double(100 - score) / 100
         let width = stroke * (0.6 + 0.8 * pressure)
-        let radius = (size - stroke * 1.4) / 2 - 0.75  // room for the widest stroke
+        let radius = (size - width) / 2 - 0.5
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let ink = color ?? .black
             let center = NSPoint(x: rect.midX, y: rect.midY)
             let track = NSBezierPath()
             track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
             track.lineWidth = width
-            ink.withAlphaComponent(color == nil ? 0.3 : 0.5).setStroke()
+            ink.withAlphaComponent(color == nil ? 0.4 : 0.5).setStroke()
             track.stroke()
             if pressure > 0 {
                 let arc = NSBezierPath()
@@ -135,6 +137,11 @@ extension Headroom {
                 arc.lineCapStyle = .round
                 ink.setStroke()
                 arc.stroke()
+            }
+            if score < Tuning.fair {
+                let core = radius - width / 2 - 1.5
+                ink.setFill()
+                NSBezierPath(ovalIn: NSRect(x: center.x - core, y: center.y - core, width: core * 2, height: core * 2)).fill()
             }
             return true
         }

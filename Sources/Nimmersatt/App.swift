@@ -381,7 +381,7 @@ struct Panel: View {
     }
 }
 
-/// The panel's ring: same geometry as `Headroom.ring` (the menu bar image), drawn as shapes
+/// The panel's ring: same idea as `Headroom.ring` (the menu bar image, larger and heavier), drawn as shapes
 /// so arc, width and colour animate between samples.
 struct Ring: View {
     static let motion = Animation.smooth(duration: 0.3)  // ponytail: feel knob; samples arrive every 2s
