@@ -242,7 +242,7 @@ struct Panel: View {
         VStack(alignment: .leading, spacing: 0) {
             // Hierarchy: the score is the hero (large ring, number inside), named and explained
             // beside it; the three contributors follow as smaller rings of the same shape.
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 Ring(score: headroom.score, size: 56, stroke: 5)
                     .overlay {
                         Text("\(100 - headroom.score)").font(.system(size: 20, weight: .semibold))
@@ -257,20 +257,25 @@ struct Panel: View {
                     Text(state.verdict).foregroundStyle(.secondary)
                 }
             }
-            .padding(.top, 10)
+            .padding(.top, 8)  // plus the panel's 6 = 14, same as the side margin
 
             // One ring per contributor, its glyph inside. Facts are in the tooltip.
+            // Outer rings sit on the content edges, in line with the hero ring and the chevron.
             HStack(spacing: 0) {
                 contributor("cpu", headroom.cpu, "CPU: \(Int(headroom.load))% of all cores busy")
+                Spacer(minLength: 0)
                 contributor("memorychip", headroom.memory,
                             "Memory: \(headroom.memoryFree)% free, \(headroom.swapUsed.formatted(.byteCount(style: .memory))) swap")
+                Spacer(minLength: 0)
                 contributor("display", headroom.gpu, "GPU: \(Int(headroom.gpuBusy))% busy")
+                Spacer(minLength: 0)
                 contributor("thermometer.medium", headroom.thermal,
                             "Thermal: " + ["nominal", "fair", "serious", "critical"][headroom.thermalState.rawValue])
+                Spacer(minLength: 0)
                 contributor("internaldrive", headroom.disk,
                             "Disk: \(Int(headroom.diskFreeGB)) GB free, \(Int(headroom.diskBusy))% busy")
             }
-            .padding(.vertical, 12)
+            .padding(.vertical, 14)
 
             if !culprits.isEmpty {
                 Divider().padding(.bottom, 4)
@@ -316,7 +321,6 @@ struct Panel: View {
                     .foregroundStyle(Headroom.alarm(score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.secondary))
                     .animation(Ring.motion, value: score)
             }
-            .frame(maxWidth: .infinity)
             .help(fact)
             .accessibilityElement()
             .accessibilityLabel(fact)
