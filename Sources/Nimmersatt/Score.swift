@@ -17,8 +17,10 @@ enum Tuning {
 }
 
 /// One number, 0 to 100, higher is better: how much room the Mac has left.
-/// It is the weakest of its contributors, because a bottleneck is not averaged away.
-/// Disk counts at reduced weight (see Tuning.diskWeight).
+/// The weakest contributor sets it, because a bottleneck is not averaged away. Overload
+/// compounds: every further contributor below the calm band scales the score down again,
+/// so two strained resources score far worse than one. Contributors in the calm band
+/// change nothing. Disk counts at reduced weight (see Tuning.diskWeight).
 struct Headroom {
     let load: Double        // percent of all cores in use
     let memoryFree: Int     // kernel's free-memory percentage
@@ -64,8 +66,18 @@ struct Headroom {
     private static func weighted(_ c: (name: String, score: Int, weight: Double)) -> Int {
         100 - Int((Double(100 - c.score) * c.weight).rounded())
     }
-    var score: Int { contributors.map(Self.weighted).min()! }
+    var score: Int {
+        let values = contributors.map(Self.weighted).sorted()
+        let others = values.dropFirst().reduce(1.0) { $0 * min(1, Double($1) / Double(Tuning.good)) }
+        return Int((Double(values[0]) * others).rounded())
+    }
     var weakest: String { contributors.min { Self.weighted($0) < Self.weighted($1) }!.name }
+    /// Contributors below the calm band, weakest first.
+    var strained: [String] {
+        contributors.filter { Self.weighted($0) < Tuning.good }
+            .sorted { Self.weighted($0) < Self.weighted($1) }
+            .map(\.name)
+    }
 
     static func diskFreeGB() -> Double {
         let volume = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
@@ -163,6 +175,7 @@ struct Snapshot {
         if culprits.count == 1 { return "\(culprits[0].app.name) is eating resources" }
         if culprits.count > 1 { return "\(culprits.count) apps are eating resources" }
         if headroom.score >= Tuning.good { return "All clear" }
+        if headroom.strained.count > 1 { return headroom.strained.formatted(.list(type: .and)) + " under pressure" }
         switch headroom.weakest {
         case "CPU": return "Busy across many apps"
         case "GPU": return "GPU is busy"
