@@ -69,7 +69,9 @@ final class Sampler {
         return usage
     }
 
-    func apps() -> [AppUsage] {
+    /// `roots: false` skips the root-owned processes: they cost a `ps` spawn (24ms of CPU, five
+    /// times the rest of the walk), and nobody reads them while the panel is closed.
+    func apps(roots: Bool = true) -> [AppUsage] {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         let elapsed = Double(now - lastTime)
         lastTime = now
@@ -119,7 +121,7 @@ final class Sampler {
             groups[key] = group
         }
 
-        for p in rootProcesses(unreadable) {
+        for p in roots ? rootProcesses(unreadable) : [] {
             let key = "root:\(p.name)"
             var group = groups[key] ?? AppUsage(id: key, name: p.name)
             group.cpu += p.cpu

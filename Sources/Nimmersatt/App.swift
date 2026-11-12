@@ -197,7 +197,7 @@ final class Model {
         if ticks % Tuning.diskSpaceTicks == 1 { diskFreeGB = Headroom.diskFreeGB() }
 
         if panelOpen || ticks % Tuning.idleAppTicks == 1 {
-            var fresh = sampler.apps()
+            var fresh = sampler.apps(roots: panelOpen)
             // After a gap the rates already average a long window; smooth only consecutive samples.
             let wApps = ticks - lastAppsTick == 1 ? w : 1
             let old = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
