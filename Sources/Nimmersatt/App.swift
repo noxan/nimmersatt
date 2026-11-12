@@ -101,6 +101,8 @@ struct NimmersattApp: App {
     var body: some Scene {
         MenuBarExtra {
             Panel(state: model.state)
+                .background(GeometryReader { geo in WindowFit(height: geo.size.height) })
+                .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
         } label: {
             // Quiet icon by default; the culprit's name only while something is eating resources.
             if let culprit = model.state.culprits.first {
@@ -110,6 +112,25 @@ struct NimmersattApp: App {
             }
         }
         .menuBarExtraStyle(.window)  // the system supplies the panel's glass; content adds no material
+    }
+}
+
+// MenuBarExtra's window grows with its content but never shrinks back, leaving the
+// panel floating in an oversized window. Pin the window height to the content height
+// ourselves, top edge fixed. Idempotent, so it agrees with the system when that resizes.
+private struct WindowFit: NSViewRepresentable {
+    let height: CGFloat
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        // Synchronous on purpose: deferring a runloop turn draws one frame at the old size.
+        guard let window = view.window, let content = window.contentView,
+              abs(content.frame.height - height) > 0.5 else { return }
+        var frame = window.frame
+        frame.size.height += height - content.frame.height
+        frame.origin.y = window.frame.maxY - frame.size.height
+        window.setFrame(frame, display: true)
     }
 }
 
