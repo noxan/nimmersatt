@@ -54,14 +54,16 @@ struct Headroom {
 
 extension Headroom {
     /// nil while there is room (stay quiet, default colour), orange for warning, red for critical.
-    var alarm: NSColor? { score >= Tuning.good ? nil : score >= Tuning.fair ? .systemOrange : .systemRed }
+    static func alarm(_ score: Int) -> NSColor? {
+        score >= Tuning.good ? nil : score >= Tuning.fair ? .systemOrange : .systemRed
+    }
 
-    /// Menu bar icon: a ring that fills clockwise with pressure (100 - score).
-    /// A template image while calm, so the system tints it like every other menu bar icon.
-    var icon: NSImage {
-        let alarm = alarm, pressure = Double(100 - score) / 100
+    /// A ring that fills clockwise with pressure (100 - score). Used as the menu bar icon and
+    /// in the panel. A template image while calm, so it takes the surrounding default colour.
+    static func ring(_ score: Int) -> NSImage {
+        let color = alarm(score), pressure = Double(100 - score) / 100
         let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-            let ink = alarm ?? .black
+            let ink = color ?? .black
             let center = NSPoint(x: rect.midX, y: rect.midY)
             let track = NSBezierPath()
             track.appendArc(withCenter: center, radius: 6, startAngle: 0, endAngle: 360)
@@ -78,7 +80,7 @@ extension Headroom {
             }
             return true
         }
-        image.isTemplate = alarm == nil
+        image.isTemplate = color == nil
         return image
     }
 }

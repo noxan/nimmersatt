@@ -105,7 +105,7 @@ struct NimmersattApp: App {
                 .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
         } label: {
             // Pressure ring: default colour while calm, orange then red as headroom runs out.
-            Image(nsImage: model.state.headroom.icon)
+            Image(nsImage: Headroom.ring(model.state.headroom.score))
                 .accessibilityLabel("Headroom \(model.state.headroom.score) of 100")
         }
         .menuBarExtraStyle(.window)  // the system supplies the panel's glass; content adds no material
@@ -147,18 +147,10 @@ struct Panel: View {
                 Text("Headroom").fontWeight(.bold)
                 Spacer()
                 Text("\(headroom.score)").fontWeight(.bold)
+                Image(nsImage: Headroom.ring(headroom.score))
             }
             .padding(.top, 8)
-            Capsule().fill(.quaternary)
-                .overlay(alignment: .leading) {
-                    GeometryReader { geo in
-                        Capsule()
-                            .fill(headroom.alarm.map { Color(nsColor: $0) } ?? .green)
-                            .frame(width: geo.size.width * Double(headroom.score) / 100)
-                    }
-                }
-                .frame(height: 6)
-                .padding(.vertical, 8)
+            .padding(.bottom, 2)
             Text(state.verdict).foregroundStyle(.secondary).padding(.bottom, 8)
 
             if !culprits.isEmpty {
@@ -174,9 +166,9 @@ struct Panel: View {
             Action(title: "Details", expanded: expanded) { expanded.toggle() }
             if expanded {
                 section("Contributors") {
-                    Row(symbol: "cpu", name: "CPU", value: "\(headroom.cpu)", detail: "\(Int(headroom.load))% of all cores busy")
-                    Row(symbol: "memorychip", name: "Memory", value: "\(headroom.memory)", detail: "\(headroom.memoryFree)% free")
-                    Row(symbol: "thermometer.medium", name: "Thermal", value: "\(headroom.thermal)",
+                    Row(symbol: "cpu", name: "CPU", ring: headroom.cpu, detail: "\(Int(headroom.load))% of all cores busy")
+                    Row(symbol: "memorychip", name: "Memory", ring: headroom.memory, detail: "\(headroom.memoryFree)% free")
+                    Row(symbol: "thermometer.medium", name: "Thermal", ring: headroom.thermal,
                         detail: ["Nominal", "Fair", "Serious", "Critical"][headroom.thermalState.rawValue])
                 }
                 section("CPU") {
@@ -220,7 +212,8 @@ struct Row: View {
     var icon: NSImage?
     var symbol = "gearshape.fill"
     let name: String
-    let value: String
+    var value = ""
+    var ring: Int?  // a contributor score, drawn as a pressure ring instead of a value
     var detail: String?
 
     var body: some View {
@@ -240,7 +233,11 @@ struct Row: View {
                 }
             }
             Spacer(minLength: 8)
-            Text(value).foregroundStyle(.secondary)
+            if let ring {
+                Image(nsImage: Headroom.ring(ring)).accessibilityLabel("\(ring) of 100")
+            } else {
+                Text(value).foregroundStyle(.secondary)
+            }
         }
         .frame(height: 34)
     }
