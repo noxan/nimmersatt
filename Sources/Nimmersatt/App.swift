@@ -24,6 +24,12 @@ enum Main {
         precondition(idle.culprits.isEmpty && idle.verdict == "All clear", "no culprit when calm")
         let hog = Snapshot(apps: [AppUsage(id: "a", name: "A", cpu: 150)], headroom: calm)
         precondition(hog.culprits.map(\.id) == ["a"], "full core is a culprit")
+        let resting = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, gpuBusy: 30)
+        precondition(resting.gpu == 100, "resting gpu is free")
+        let rendering = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal, gpuBusy: 100)
+        precondition(rendering.score == 0 && Snapshot(headroom: rendering).verdict == "GPU is busy", "busy gpu, full weight")
+        let renderer = Snapshot(apps: [AppUsage(id: "a", name: "A", gpu: 80)], headroom: calm)
+        precondition(renderer.culprits.map(\.value) == ["80% GPU"], "gpu hog is a culprit")
         let swapping = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal,
                                 swapUsed: ProcessInfo.processInfo.physicalMemory / 2)
         precondition(swapping.memory == 50 && swapping.weakest == "Memory", "swap lowers memory")
@@ -52,11 +58,13 @@ enum Main {
             let mem = app.memory.formatted(.byteCount(style: .memory))
             print(cpu, mem.padding(toLength: 10, withPad: " ", startingAt: 0), app.name, app.busiest)
         }
-        let now = Headroom.now(load: total / cores, diskBusy: sampler.diskBusy)
+        let now = Headroom.now(load: total / cores, diskBusy: sampler.diskBusy, gpuBusy: sampler.gpuBusy)
+        precondition(apps.contains { $0.gpu > 0 }, "no per-app gpu readings")
         precondition(now.diskFreeGB > 0 && now.diskFreeGB < 1000, "disk space not read")
         print("ok: \(apps.count) groups, \(Int(total))% of \(Int(cores * 100))%, headroom \(now.score)",
               now.contributors.map { "\($0.name) \($0.score)" },
-              "disk \(Int(now.diskFreeGB))GB free, \(Int(now.diskBusy))% busy, swap \(now.swapUsed >> 20)MB")
+              "disk \(Int(now.diskFreeGB))GB free, \(Int(now.diskBusy))% busy, swap \(now.swapUsed >> 20)MB, gpu \(Int(now.gpuBusy))%",
+              "top gpu: " + (apps.max { $0.gpu < $1.gpu }.map { "\($0.name) \(Int($0.gpu))%" } ?? "none"))
     }
 
     // Renders the panel with live data to a PNG, to review layout without clicking the menu bar.
@@ -66,7 +74,7 @@ enum Main {
         sleep(1)
         let apps = sampler.sample()
         let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
-        let state = Snapshot(apps: apps, headroom: .now(load: load, diskBusy: sampler.diskBusy))
+        let state = Snapshot(apps: apps, headroom: .now(load: load, diskBusy: sampler.diskBusy, gpuBusy: sampler.gpuBusy))
         let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
         renderer.scale = 2
         let tiff = renderer.nsImage!.tiffRepresentation!
@@ -80,8 +88,9 @@ final class Model {
     var state = Snapshot()
     private let sampler = Sampler()
     // Smoothing state, touched only on the timer queue.
-    private var smoothed: [String: (cpu: Double, disk: Double)] = [:]
+    private var smoothed: [String: (cpu: Double, disk: Double, gpu: Double)] = [:]
     private var diskBusy = 0.0
+    private var gpuBusy = 0.0
     private let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
 
     init() {
@@ -94,7 +103,7 @@ final class Model {
         timer.resume()
     }
 
-    // Smooths CPU and disk rates so a 2s spike neither names a culprit nor moves the score.
+    // Smooths CPU, GPU and disk rates so a 2s spike neither names a culprit nor moves the score.
     private func tick() -> Snapshot {
         var apps = sampler.sample()
         let w = Tuning.smoothing
@@ -102,12 +111,14 @@ final class Model {
             if let old = smoothed[apps[i].id] {
                 apps[i].cpu = old.cpu * (1 - w) + apps[i].cpu * w
                 apps[i].disk = old.disk * (1 - w) + apps[i].disk * w
+                apps[i].gpu = old.gpu * (1 - w) + apps[i].gpu * w
             }
         }
-        smoothed = Dictionary(apps.map { ($0.id, ($0.cpu, $0.disk)) }, uniquingKeysWith: { a, _ in a })
+        smoothed = Dictionary(apps.map { ($0.id, ($0.cpu, $0.disk, $0.gpu)) }, uniquingKeysWith: { a, _ in a })
         diskBusy = diskBusy * (1 - w) + sampler.diskBusy * w
+        gpuBusy = gpuBusy * (1 - w) + sampler.gpuBusy * w
         let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
-        return Snapshot(apps: apps, headroom: .now(load: load, diskBusy: diskBusy))
+        return Snapshot(apps: apps, headroom: .now(load: load, diskBusy: diskBusy, gpuBusy: gpuBusy))
     }
 }
 
@@ -179,6 +190,7 @@ struct Panel: View {
             // One ring per contributor, its glyph inside. Facts are in the tooltip.
             HStack(spacing: 0) {
                 contributor("cpu", headroom.cpu, "CPU: \(Int(headroom.load))% of all cores busy")
+                contributor("display", headroom.gpu, "GPU: \(Int(headroom.gpuBusy))% busy")
                 contributor("memorychip", headroom.memory,
                             "Memory: \(headroom.memoryFree)% free, \(headroom.swapUsed.formatted(.byteCount(style: .memory))) swap")
                 contributor("thermometer.medium", headroom.thermal,
@@ -191,8 +203,7 @@ struct Panel: View {
             if !culprits.isEmpty {
                 Divider().padding(.bottom, 4)
                 ForEach(culprits) { culprit in
-                    Row(icon: culprit.app.icon, name: culprit.app.name, value: culprit.value,
-                        detail: culprit.app.busiestCPU >= 1 ? culprit.app.busiest : nil)
+                    Row(icon: culprit.app.icon, name: culprit.app.name, value: culprit.value, detail: culprit.detail)
                 }
                 Spacer().frame(height: 4)
             }

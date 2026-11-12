@@ -4,6 +4,8 @@ import AppKit
 enum Tuning {
     static let hogCPU = 100.0        // an app is "eating" CPU at one full core, smoothed
     static let tightMemory = 50      // below this memory headroom, name the biggest apps
+    static let hogGPU = 50.0         // an app is "eating" the GPU at half of its time, smoothed
+    static let gpuIdle = 30.0        // GPU utilisation a resting desktop shows anyway; scored as free
     static let hogDisk = 50e6        // an app is "eating" disk at 50MB/s read + written, smoothed
     static let roomyDiskGB = 40.0    // free space at which the disk scores 100; below, linear to 0
     static let diskSaturation = 4.0  // I/O operations in flight, on average, that count as 100% busy
@@ -23,6 +25,7 @@ struct Headroom {
     var swapUsed: UInt64 = 0 // bytes of swap in use
     var diskFreeGB = 1000.0 // free space on the boot volume, as Finder counts it
     var diskBusy = 0.0      // percent of time the disks spent serving I/O
+    var gpuBusy = 0.0       // the GPU's own utilisation percentage
 
     var cpu: Int { Int(max(0, min(100, 100 - load))) }
 
@@ -49,8 +52,12 @@ struct Headroom {
     var diskIdle: Int { Int(max(0, min(100, 100 - diskBusy))) }
     var disk: Int { min(diskSpace, diskIdle) }
 
+    // Compositing an idle desktop already keeps the GPU around 20% busy, so the scale starts above that.
+    var gpu: Int { Int(max(0, min(100, 100 - (gpuBusy - Tuning.gpuIdle) / (100 - Tuning.gpuIdle) * 100))) }
+
     var contributors: [(name: String, score: Int, weight: Double)] {
-        [("CPU", cpu, 1), ("Memory", memory, 1), ("Thermal", thermal, 1), ("Disk", disk, Tuning.diskWeight)]
+        [("CPU", cpu, 1), ("GPU", gpu, 1), ("Memory", memory, 1), ("Thermal", thermal, 1),
+         ("Disk", disk, Tuning.diskWeight)]
     }
     private static func weighted(_ c: (name: String, score: Int, weight: Double)) -> Int {
         100 - Int((Double(100 - c.score) * c.weight).rounded())
@@ -58,7 +65,7 @@ struct Headroom {
     var score: Int { contributors.map(Self.weighted).min()! }
     var weakest: String { contributors.min { Self.weighted($0) < Self.weighted($1) }!.name }
 
-    static func now(load: Double, diskBusy: Double) -> Headroom {
+    static func now(load: Double, diskBusy: Double, gpuBusy: Double) -> Headroom {
         var swap = xsw_usage()
         var size = MemoryLayout<xsw_usage>.size
         sysctlbyname("vm.swapusage", &swap, &size, nil, 0)
@@ -69,7 +76,8 @@ struct Headroom {
                         thermalState: ProcessInfo.processInfo.thermalState,
                         swapUsed: swap.xsu_used,
                         diskFreeGB: (volume?.volumeAvailableCapacityForImportantUsage).map { Double($0) / 1e9 } ?? 1000,
-                        diskBusy: diskBusy)
+                        diskBusy: diskBusy,
+                        gpuBusy: gpuBusy)
     }
 
     private static func sysctlInt(_ name: String) -> Int? {
@@ -116,6 +124,7 @@ extension Headroom {
 struct Culprit: Identifiable {
     let app: AppUsage
     let value: String
+    var detail: String?  // the busiest child process; known for CPU only
     var id: String { app.id }
 }
 
@@ -123,12 +132,15 @@ struct Snapshot {
     var apps: [AppUsage] = []
     var headroom = Headroom(load: 0, memoryFree: 100, memoryPressure: 1, thermalState: .nominal)
 
-    /// Apps worth naming: anything holding a full core or hammering the disk, plus the
+    /// Apps worth naming: anything holding a full core, half the GPU or hammering the disk, plus the
     /// biggest apps when memory is tight. Each app is listed once, under its first reason.
     var culprits: [Culprit] {
         var out = apps.filter { $0.cpu >= Tuning.hogCPU }
             .sorted { $0.cpu > $1.cpu }
-            .map { Culprit(app: $0, value: "\(Int($0.cpu))%") }
+            .map { Culprit(app: $0, value: "\(Int($0.cpu))%", detail: $0.busiestCPU >= 1 ? $0.busiest : nil) }
+        out += apps.filter { $0.gpu >= Tuning.hogGPU }
+            .sorted { $0.gpu > $1.gpu }
+            .map { Culprit(app: $0, value: "\(Int($0.gpu))% GPU") }
         out += apps.filter { $0.disk >= Tuning.hogDisk }
             .sorted { $0.disk > $1.disk }
             .map { Culprit(app: $0, value: Int64($0.disk).formatted(.byteCount(style: .file)) + "/s") }
@@ -147,6 +159,7 @@ struct Snapshot {
         if headroom.score >= Tuning.good { return "All clear" }
         switch headroom.weakest {
         case "CPU": return "Busy across many apps"
+        case "GPU": return "GPU is busy"
         case "Memory": return "Memory is getting tight"
         case "Disk": return headroom.diskSpace < headroom.diskIdle ? "Disk is almost full" : "Disk is busy"
         default: return "Running hot"

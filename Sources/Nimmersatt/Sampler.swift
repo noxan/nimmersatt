@@ -13,6 +13,7 @@ struct AppUsage: Identifiable {
     var cpu = 0.0            // percent of one core
     var memory: UInt64 = 0   // bytes
     var disk = 0.0           // bytes per second, read + written
+    var gpu = 0.0            // percent of GPU time
     var busiest = ""         // busiest process in the group, if not the app itself
     var busiestCPU = 0.0
 }
@@ -24,6 +25,9 @@ final class Sampler {
     /// How busy the disks were over the last interval, 0 to 100: summed I/O time per second
     /// of wall time (the average number of operations in flight) against Tuning.diskSaturation.
     private(set) var diskBusy = 0.0
+    private var lastGPU: [pid_t: UInt64] = [:]  // cumulative GPU ns per pid
+    /// The GPU's own utilisation figure, 0 to 100, from the latest sample.
+    private(set) var gpuBusy = 0.0
     private var identity: [pid_t: (name: String, icon: NSImage?)] = [:]
 
     // rusage times are mach ticks, not ns: 125/3 on Apple Silicon, 1/1 on Intel.
@@ -43,6 +47,7 @@ final class Sampler {
             diskBusy = min(100, Double(diskTime - lastDiskTime) / elapsed / Tuning.diskSaturation * 100)
         }
         lastDiskTime = diskTime
+        let gpu = sampleGPU(elapsed: elapsed)
 
         var pids = [pid_t](repeating: 0, count: Int(proc_listallpids(nil, 0)) + 64)
         let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
@@ -80,6 +85,7 @@ final class Sampler {
             group.cpu += cpu
             group.memory += info.ri_phys_footprint
             group.disk += disk
+            group.gpu += gpu[pid] ?? 0
             if pid != owner, cpu > group.busiestCPU {
                 group.busiest = processName(pid)
                 group.busiestCPU = cpu
@@ -92,6 +98,7 @@ final class Sampler {
             var group = groups[key] ?? AppUsage(id: key, name: p.name)
             group.cpu += p.cpu
             group.memory += p.memory
+            group.gpu += gpu[p.pid] ?? 0
             groups[key] = group
         }
 
@@ -110,13 +117,54 @@ final class Sampler {
         var total: UInt64 = 0
         while case let entry = IOIteratorNext(iterator), entry != 0 {
             defer { IOObjectRelease(entry) }
-            let stats = IORegistryEntryCreateCFProperty(entry, "Statistics" as CFString, kCFAllocatorDefault, 0)?
-                .takeRetainedValue() as? [String: Any]
+            let stats = property(entry, "Statistics") as? [String: Any]
             for key in ["Total Time (Read)", "Total Time (Write)"] {
                 total += (stats?[key] as? NSNumber)?.uint64Value ?? 0
             }
         }
         return total
+    }
+
+    // GPU time per pid over the last interval, as percent of that interval; also updates gpuBusy.
+    // Read from the IO registry: no privileges needed, and it covers root-owned processes
+    // (WindowServer) exactly. ponytail: these registry keys are undocumented. If Apple renames
+    // them the GPU ring reads idle instead of failing; upgrade path is IOReport "GPU Stats".
+    private func sampleGPU(elapsed: Double) -> [pid_t: Double] {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator) == KERN_SUCCESS
+        else { return [:] }
+        defer { IOObjectRelease(iterator) }
+        var totals: [pid_t: UInt64] = [:]
+        var busy = 0.0
+        while case let accelerator = IOIteratorNext(iterator), accelerator != 0 {
+            defer { IOObjectRelease(accelerator) }
+            let stats = property(accelerator, "PerformanceStatistics") as? [String: Any]
+            busy = max(busy, (stats?["Device Utilization %"] as? NSNumber)?.doubleValue ?? 0)
+            var clients: io_iterator_t = 0
+            guard IORegistryEntryGetChildIterator(accelerator, kIOServicePlane, &clients) == KERN_SUCCESS else { continue }
+            defer { IOObjectRelease(clients) }
+            while case let client = IOIteratorNext(clients), client != 0 {
+                defer { IOObjectRelease(client) }
+                // The creator reads "pid 643, WindowServer".
+                guard let creator = property(client, "IOUserClientCreator") as? String,
+                      let pid = pid_t(creator.dropFirst(4).prefix(while: { $0 != "," })),
+                      let usage = property(client, "AppUsage") as? [[String: Any]] else { continue }
+                totals[pid, default: 0] += usage.reduce(0) {
+                    $0 + (($1["accumulatedGPUTime"] as? NSNumber)?.uint64Value ?? 0)
+                }
+            }
+        }
+        gpuBusy = busy
+        var usage: [pid_t: Double] = [:]
+        for (pid, ns) in totals {
+            if let before = lastGPU[pid], ns >= before { usage[pid] = Double(ns - before) / elapsed * 100 }
+        }
+        lastGPU = totals
+        return usage
+    }
+
+    private func property(_ entry: io_registry_entry_t, _ key: String) -> Any? {
+        IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
     }
 
     private func identify(_ pid: pid_t) -> (name: String, icon: NSImage?) {
@@ -138,7 +186,7 @@ final class Sampler {
     // via libproc without privileges, so ask setuid `ps`. Its %cpu is a decaying
     // average and rss is not footprint, so these rows are approximate. Upgrade path:
     // a privileged helper, if exact numbers for system daemons ever matter.
-    private func rootProcesses(_ pids: Set<pid_t>) -> [(name: String, cpu: Double, memory: UInt64)] {
+    private func rootProcesses(_ pids: Set<pid_t>) -> [(pid: pid_t, name: String, cpu: Double, memory: UInt64)] {
         let ps = Process()
         let pipe = Pipe()
         ps.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -152,7 +200,7 @@ final class Sampler {
             guard f.count == 4, let pid = pid_t(f[0]), pids.contains(pid),
                   let cpu = Double(f[1]), let rssKB = UInt64(f[2]) else { return nil }
             let name = f[3].split(separator: "/").last.map(String.init) ?? String(f[3])
-            return (name, cpu, rssKB * 1024)
+            return (pid, name, cpu, rssKB * 1024)
         }
     }
 }
