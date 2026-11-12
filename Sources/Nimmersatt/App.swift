@@ -7,14 +7,26 @@ enum Main {
         if args.contains("--check") {
             check()
         } else if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
-            snapshot(to: args[i + 1])
+            snapshot(to: args[i + 1], expanded: args.contains("--details"))
         } else {
             NimmersattApp.main()
         }
     }
 
-    // Self-check: `swift run Nimmersatt --check`. Fails if sampling or grouping breaks.
+    // Self-check: `swift run Nimmersatt --check`. Fails if sampling, grouping or scoring breaks.
     static func check() {
+        let calm = Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .nominal)
+        precondition(calm.score == 95 && calm.weakest == "CPU", "calm score")
+        let squeezed = Headroom(load: 5, memoryFree: 60, memoryPressure: 4, thermalState: .nominal)
+        precondition(squeezed.score == 15 && squeezed.weakest == "Memory", "memory pressure caps the score")
+        precondition(Headroom(load: 5, memoryFree: 60, memoryPressure: 1, thermalState: .critical).score == 0, "thermal")
+        let idle = Snapshot(apps: [AppUsage(id: "a", name: "A", cpu: 20)], headroom: calm)
+        precondition(idle.culprits.isEmpty && idle.verdict == "All clear", "no culprit when calm")
+        let hog = Snapshot(apps: [AppUsage(id: "a", name: "A", cpu: 150)], headroom: calm)
+        precondition(hog.culprits.map(\.id) == ["a"], "full core is a culprit")
+        let tight = Snapshot(apps: [AppUsage(id: "a", name: "A", memory: 1 << 30)], headroom: squeezed)
+        precondition(tight.culprits.map(\.id) == ["a"], "tight memory names the biggest app")
+
         let sampler = Sampler()
         _ = sampler.sample()
         sleep(1)
@@ -30,15 +42,19 @@ enum Main {
             let mem = app.memory.formatted(.byteCount(style: .memory))
             print(cpu, mem.padding(toLength: 10, withPad: " ", startingAt: 0), app.name, app.busiest)
         }
-        print("ok: \(apps.count) groups, \(Int(total))% of \(Int(cores * 100))%")
+        let now = Headroom.now(load: total / cores)
+        print("ok: \(apps.count) groups, \(Int(total))% of \(Int(cores * 100))%, headroom \(now.score)", now.contributors)
     }
 
     // Renders the panel with live data to a PNG, to review layout without clicking the menu bar.
-    @MainActor static func snapshot(to path: String) {
+    @MainActor static func snapshot(to path: String, expanded: Bool) {
         let sampler = Sampler()
         _ = sampler.sample()
         sleep(1)
-        let renderer = ImageRenderer(content: Panel(apps: sampler.sample()).background(.background))
+        let apps = sampler.sample()
+        let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
+        let state = Snapshot(apps: apps, headroom: .now(load: load))
+        let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
         renderer.scale = 2
         let tiff = renderer.nsImage!.tiffRepresentation!
         let png = NSBitmapImageRep(data: tiff)!.representation(using: .png, properties: [:])!
@@ -48,18 +64,32 @@ enum Main {
 
 @Observable
 final class Model {
-    var apps: [AppUsage] = []
+    var state = Snapshot()
     private let sampler = Sampler()
+    private var smoothed: [String: Double] = [:]  // touched only on the timer queue
     private let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
 
     init() {
         timer.schedule(deadline: .now(), repeating: 2.0)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            let apps = self.sampler.sample()
-            DispatchQueue.main.async { self.apps = apps }
+            let state = self.tick()
+            DispatchQueue.main.async { self.state = state }
         }
         timer.resume()
+    }
+
+    // Smooths per-app CPU so a 2s spike neither names a culprit nor moves the score.
+    private func tick() -> Snapshot {
+        var apps = sampler.sample()
+        for i in apps.indices {
+            if let old = smoothed[apps[i].id] {
+                apps[i].cpu = old * (1 - Tuning.smoothing) + apps[i].cpu * Tuning.smoothing
+            }
+        }
+        smoothed = Dictionary(apps.map { ($0.id, $0.cpu) }, uniquingKeysWith: { a, _ in a })
+        let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
+        return Snapshot(apps: apps, headroom: .now(load: load))
     }
 }
 
@@ -70,11 +100,11 @@ struct NimmersattApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            Panel(apps: model.apps)
+            Panel(state: model.state)
         } label: {
-            // Name the hog in the menu bar only when one app holds half a core or more.
-            if let top = model.apps.max(by: { $0.cpu < $1.cpu }), top.cpu >= 50 {
-                Text("\(top.name) \(Int(top.cpu))%")
+            // Quiet icon by default; the culprit's name only while something is eating resources.
+            if let culprit = model.state.culprits.first {
+                Text("\(culprit.app.name) \(culprit.value)")
             } else {
                 Image(systemName: "gauge.with.needle")
             }
@@ -85,29 +115,66 @@ struct NimmersattApp: App {
 
 // Laid out like the system's Wi-Fi panel: bold title, inset dividers, bold section
 // headers, rows of round icon + name + trailing value, plain footer actions.
+// Default view is the score, a verdict and any culprits; Details holds the rest.
 struct Panel: View {
-    let apps: [AppUsage]
+    let state: Snapshot
+    @State var expanded = false
 
     var body: some View {
-        let cores = Double(ProcessInfo.processInfo.activeProcessorCount)
-        let load = apps.reduce(0) { $0 + $1.cpu } / cores
+        let headroom = state.headroom
+        let culprits = state.culprits
 
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Nimmersatt").fontWeight(.bold)
+                Text("Headroom").fontWeight(.bold)
                 Spacer()
-                Text("\(Int(load))% CPU").foregroundStyle(.secondary)
+                Text("\(headroom.score)").fontWeight(.bold)
             }
-            .padding(.vertical, 8)
+            .padding(.top, 8)
+            Capsule().fill(.quaternary)
+                .overlay(alignment: .leading) {
+                    GeometryReader { geo in
+                        Capsule()
+                            .fill(headroom.score >= Tuning.good ? .green : headroom.score >= Tuning.fair ? .yellow : .red)
+                            .frame(width: geo.size.width * Double(headroom.score) / 100)
+                    }
+                }
+                .frame(height: 6)
+                .padding(.vertical, 8)
+            Text(state.verdict).foregroundStyle(.secondary).padding(.bottom, 8)
 
-            section("CPU", apps.sorted { $0.cpu > $1.cpu }) { app in
-                Row(app: app, value: "\(Int(app.cpu))%", detail: app.busiestCPU >= 1 ? app.busiest : nil)
-            }
-            section("Memory", apps.sorted { $0.memory > $1.memory }) { app in
-                Row(app: app, value: app.memory.formatted(.byteCount(style: .memory)), detail: nil)
+            if !culprits.isEmpty {
+                Divider().padding(.bottom, 4)
+                ForEach(culprits) { culprit in
+                    Row(icon: culprit.app.icon, name: culprit.app.name, value: culprit.value,
+                        detail: culprit.app.busiestCPU >= 1 ? culprit.app.busiest : nil)
+                }
+                Spacer().frame(height: 4)
             }
 
             Divider().padding(.bottom, 4)
+            Action(title: "Details", expanded: expanded) { expanded.toggle() }
+            if expanded {
+                section("Contributors") {
+                    Row(symbol: "cpu", name: "CPU", value: "\(headroom.cpu)", detail: "\(Int(headroom.load))% of all cores busy")
+                    Row(symbol: "memorychip", name: "Memory", value: "\(headroom.memory)", detail: "\(headroom.memoryFree)% free")
+                    Row(symbol: "thermometer.medium", name: "Thermal", value: "\(headroom.thermal)",
+                        detail: ["Nominal", "Fair", "Serious", "Critical"][headroom.thermalState.rawValue])
+                }
+                section("CPU") {
+                    ForEach(state.apps.sorted { $0.cpu > $1.cpu }.prefix(5)) { app in
+                        Row(icon: app.icon, name: app.name, value: "\(Int(app.cpu))%",
+                            detail: app.busiestCPU >= 1 ? app.busiest : nil)
+                    }
+                }
+                section("Memory") {
+                    ForEach(state.apps.sorted { $0.memory > $1.memory }.prefix(5)) { app in
+                        Row(icon: app.icon, name: app.name, value: app.memory.formatted(.byteCount(style: .memory)))
+                    }
+                }
+            }
+
+            Divider().padding(.vertical, 4)
             Action(title: "Activity Monitor…") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
             }
@@ -120,35 +187,36 @@ struct Panel: View {
     }
 
     @ViewBuilder
-    private func section(_ title: String, _ sorted: [AppUsage], row: @escaping (AppUsage) -> Row) -> some View {
-        Divider()
+    private func section(_ title: String, @ViewBuilder rows: () -> some View) -> some View {
+        Divider().padding(.top, 4)
         Text(title)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
             .padding(.top, 8)
             .padding(.bottom, 2)
-        ForEach(sorted.prefix(5)) { row($0) }
-        Spacer().frame(height: 6)
+        rows()
     }
 }
 
 struct Row: View {
-    let app: AppUsage
+    var icon: NSImage?
+    var symbol = "gearshape.fill"
+    let name: String
     let value: String
-    let detail: String?
+    var detail: String?
 
     var body: some View {
         HStack(spacing: 8) {
-            if let icon = app.icon {
+            if let icon {
                 Image(nsImage: icon).resizable().frame(width: 26, height: 26)
             } else {
-                Image(systemName: "gearshape.fill")
+                Image(systemName: symbol)
                     .foregroundStyle(.secondary)
                     .frame(width: 26, height: 26)
                     .background(.quaternary, in: Circle())
             }
             VStack(alignment: .leading, spacing: 0) {
-                Text(app.name).lineLimit(1)
+                Text(name).lineLimit(1)
                 if let detail {
                     Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -162,17 +230,25 @@ struct Row: View {
 
 struct Action: View {
     let title: String
+    var expanded: Bool?  // non-nil draws a disclosure chevron
     let action: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(hovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 6))
-                .contentShape(Rectangle())
+            HStack {
+                Text(title)
+                Spacer()
+                if let expanded {
+                    Image(systemName: "chevron.right")
+                        .fontWeight(.semibold)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(hovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .padding(.horizontal, -8)  // highlight bleeds past the text column, like system menu rows
