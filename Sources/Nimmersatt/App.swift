@@ -309,10 +309,10 @@ struct Panel: View {
     }
 
     private func contributor(_ symbol: String, _ score: Int, _ fact: String) -> some View {
-        Ring(score: score, size: 28, stroke: 2.5)
+        Ring(score: score, size: 34, stroke: 3)
             .overlay {
                 // The glyph takes the alarm colour too, so the eye lands on what hurts.
-                Image(systemName: symbol).font(.system(size: 11))
+                Image(systemName: symbol).font(.system(size: 13))
                     .foregroundStyle(Headroom.alarm(score).map { AnyShapeStyle(Color(nsColor: $0)) } ?? AnyShapeStyle(.secondary))
                     .animation(Ring.motion, value: score)
             }
