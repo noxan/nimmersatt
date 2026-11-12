@@ -18,16 +18,23 @@ struct AppUsage: Identifiable {
     var busiestCPU = 0.0
 }
 
+struct SystemUsage {
+    var load = 0.0      // percent of all cores busy
+    /// How busy the disks were, 0 to 100: summed I/O time per second of wall time (the
+    /// average number of operations in flight) against Tuning.diskSaturation.
+    var diskBusy = 0.0
+    var gpuBusy = 0.0   // the GPU's own utilisation figure, 0 to 100
+}
+
+/// Two samplers with separate costs. `system()` is a handful of kernel reads and is all the
+/// score needs. `apps()` walks every process and spawns `ps`; it is only needed to name apps.
 final class Sampler {
     private var last: [pid_t: (cpu: Double, io: UInt64)] = [:]  // cumulative ns and bytes per pid
     private var lastTime: UInt64 = 0
+    private var lastSystemTime: UInt64 = 0
     private var lastDiskTime: UInt64 = 0
-    /// How busy the disks were over the last interval, 0 to 100: summed I/O time per second
-    /// of wall time (the average number of operations in flight) against Tuning.diskSaturation.
-    private(set) var diskBusy = 0.0
+    private var lastTicks: (busy: UInt64, total: UInt64) = (0, 0)
     private var lastGPU: [pid_t: UInt64] = [:]  // cumulative GPU ns per pid
-    /// The GPU's own utilisation figure, 0 to 100, from the latest sample.
-    private(set) var gpuBusy = 0.0
     private var identity: [pid_t: (name: String, icon: NSImage?)] = [:]
 
     // rusage times are mach ticks, not ns: 125/3 on Apple Silicon, 1/1 on Intel.
@@ -37,17 +44,36 @@ final class Sampler {
         return Double(tb.numer) / Double(tb.denom)
     }()
 
-    func sample() -> [AppUsage] {
+    func system() -> SystemUsage {
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        let elapsed = Double(now - lastTime)
-        lastTime = now
+        let elapsed = Double(now - lastSystemTime)
+        lastSystemTime = now
+        var usage = SystemUsage()
+
+        let ticks = cpuTicks()
+        if lastTicks.total > 0, ticks.total > lastTicks.total, ticks.busy >= lastTicks.busy {
+            usage.load = Double(ticks.busy - lastTicks.busy) / Double(ticks.total - lastTicks.total) * 100
+        }
+        lastTicks = ticks
 
         let diskTime = diskTimeNs()
         if lastDiskTime > 0, diskTime >= lastDiskTime {
-            diskBusy = min(100, Double(diskTime - lastDiskTime) / elapsed / Tuning.diskSaturation * 100)
+            usage.diskBusy = min(100, Double(diskTime - lastDiskTime) / elapsed / Tuning.diskSaturation * 100)
         }
         lastDiskTime = diskTime
-        let gpu = sampleGPU(elapsed: elapsed)
+
+        forEachAccelerator { accelerator in
+            let stats = property(accelerator, "PerformanceStatistics") as? [String: Any]
+            usage.gpuBusy = max(usage.gpuBusy, (stats?["Device Utilization %"] as? NSNumber)?.doubleValue ?? 0)
+        }
+        return usage
+    }
+
+    func apps() -> [AppUsage] {
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let elapsed = Double(now - lastTime)
+        lastTime = now
+        let gpu = gpuTime(elapsed: elapsed)
 
         var pids = [pid_t](repeating: 0, count: Int(proc_listallpids(nil, 0)) + 64)
         let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
@@ -107,6 +133,21 @@ final class Sampler {
         return Array(groups.values)
     }
 
+    // Cumulative CPU ticks over all cores, from the kernel: exact, and includes root processes.
+    private func cpuTicks() -> (busy: UInt64, total: UInt64) {
+        var info = host_cpu_load_info()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
+        let ok = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        } == KERN_SUCCESS
+        guard ok else { return (0, 0) }
+        let (user, system, idle, nice) = info.cpu_ticks
+        let busy = UInt64(user) + UInt64(system) + UInt64(nice)
+        return (busy, busy + UInt64(idle))
+    }
+
     // Cumulative ns all block devices spent on reads and writes. System-wide, so it also
     // sees root daemons (Spotlight, Time Machine) whose per-process I/O libproc hides from us.
     private func diskTimeNs() -> UInt64 {
@@ -125,23 +166,26 @@ final class Sampler {
         return total
     }
 
-    // GPU time per pid over the last interval, as percent of that interval; also updates gpuBusy.
-    // Read from the IO registry: no privileges needed, and it covers root-owned processes
-    // (WindowServer) exactly. ponytail: these registry keys are undocumented. If Apple renames
-    // them the GPU ring reads idle instead of failing; upgrade path is IOReport "GPU Stats".
-    private func sampleGPU(elapsed: Double) -> [pid_t: Double] {
+    // GPU readings come from the IO registry: no privileges needed, and they cover root-owned
+    // processes (WindowServer) exactly. ponytail: the registry keys are undocumented. If Apple
+    // renames them the GPU ring reads idle instead of failing; upgrade path is IOReport "GPU Stats".
+    private func forEachAccelerator(_ body: (io_registry_entry_t) -> Void) {
         var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iterator) == KERN_SUCCESS
-        else { return [:] }
+        else { return }
         defer { IOObjectRelease(iterator) }
-        var totals: [pid_t: UInt64] = [:]
-        var busy = 0.0
         while case let accelerator = IOIteratorNext(iterator), accelerator != 0 {
-            defer { IOObjectRelease(accelerator) }
-            let stats = property(accelerator, "PerformanceStatistics") as? [String: Any]
-            busy = max(busy, (stats?["Device Utilization %"] as? NSNumber)?.doubleValue ?? 0)
+            body(accelerator)
+            IOObjectRelease(accelerator)
+        }
+    }
+
+    // GPU time per pid over the last interval, as percent of that interval.
+    private func gpuTime(elapsed: Double) -> [pid_t: Double] {
+        var totals: [pid_t: UInt64] = [:]
+        forEachAccelerator { accelerator in
             var clients: io_iterator_t = 0
-            guard IORegistryEntryGetChildIterator(accelerator, kIOServicePlane, &clients) == KERN_SUCCESS else { continue }
+            guard IORegistryEntryGetChildIterator(accelerator, kIOServicePlane, &clients) == KERN_SUCCESS else { return }
             defer { IOObjectRelease(clients) }
             while case let client = IOIteratorNext(clients), client != 0 {
                 defer { IOObjectRelease(client) }
@@ -154,7 +198,6 @@ final class Sampler {
                 }
             }
         }
-        gpuBusy = busy
         var usage: [pid_t: Double] = [:]
         for (pid, ns) in totals {
             if let before = lastGPU[pid], ns >= before { usage[pid] = Double(ns - before) / elapsed * 100 }

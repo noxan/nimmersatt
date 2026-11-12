@@ -11,6 +11,8 @@ enum Tuning {
     static let diskSaturation = 4.0  // I/O operations in flight, on average, that count as 100% busy
     static let diskWeight = 0.5      // disk counts half: alone it can pull the score to 50, not lower
     static let good = 70, fair = 40  // score bands: calm, orange, red
+    static let idleAppTicks = 5      // while the panel is closed, walk the process list every 5th tick (10s)
+    static let diskSpaceTicks = 15   // re-read free disk space every 15th tick (30s)
     static let smoothing = 0.3       // weight of the newest 2s sample (about a 6s time constant)
 }
 
@@ -65,19 +67,23 @@ struct Headroom {
     var score: Int { contributors.map(Self.weighted).min()! }
     var weakest: String { contributors.min { Self.weighted($0) < Self.weighted($1) }!.name }
 
-    static func now(load: Double, diskBusy: Double, gpuBusy: Double) -> Headroom {
+    static func diskFreeGB() -> Double {
+        let volume = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return (volume?.volumeAvailableCapacityForImportantUsage).map { Double($0) / 1e9 } ?? 1000
+    }
+
+    static func now(_ system: SystemUsage, diskFreeGB: Double) -> Headroom {
         var swap = xsw_usage()
         var size = MemoryLayout<xsw_usage>.size
         sysctlbyname("vm.swapusage", &swap, &size, nil, 0)
-        let volume = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return Headroom(load: load,
+        return Headroom(load: system.load,
                         memoryFree: sysctlInt("kern.memorystatus_level") ?? 100,
                         memoryPressure: sysctlInt("kern.memorystatus_vm_pressure_level") ?? 1,
                         thermalState: ProcessInfo.processInfo.thermalState,
                         swapUsed: swap.xsu_used,
-                        diskFreeGB: (volume?.volumeAvailableCapacityForImportantUsage).map { Double($0) / 1e9 } ?? 1000,
-                        diskBusy: diskBusy,
-                        gpuBusy: gpuBusy)
+                        diskFreeGB: diskFreeGB,
+                        diskBusy: system.diskBusy,
+                        gpuBusy: system.gpuBusy)
     }
 
     private static func sysctlInt(_ name: String) -> Int? {

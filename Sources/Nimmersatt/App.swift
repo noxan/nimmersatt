@@ -1,4 +1,7 @@
+import OSLog
 import SwiftUI
+
+private let log = Logger(subsystem: "local.nimmersatt", category: "panel")
 
 @main
 enum Main {
@@ -44,13 +47,17 @@ enum Main {
         precondition(tight.culprits.map(\.id) == ["a"], "tight memory names the biggest app")
 
         let sampler = Sampler()
-        _ = sampler.sample()
+        _ = sampler.apps()
+        _ = sampler.system()
         sleep(1)
-        let apps = sampler.sample().sorted { $0.cpu > $1.cpu }
+        let apps = sampler.apps().sorted { $0.cpu > $1.cpu }
+        let system = sampler.system()
         let cores = Double(ProcessInfo.processInfo.activeProcessorCount)
         let total = apps.reduce(0) { $0 + $1.cpu }
         precondition(apps.count > 5, "no processes sampled")
         precondition(total > 0 && total <= cores * 110, "cpu total out of range: \(total)")
+        precondition(system.load > 0 && system.load <= 100, "system load out of range: \(system.load)")
+        precondition(abs(system.load - total / cores) < 25, "kernel load \(system.load) disagrees with per-app sum \(total / cores)")
         precondition(apps.contains { $0.memory > 50 << 20 }, "no memory readings")
         precondition(apps.contains { $0.id.hasPrefix("root:") }, "root processes missing")
         for app in apps.prefix(10) {
@@ -58,10 +65,10 @@ enum Main {
             let mem = app.memory.formatted(.byteCount(style: .memory))
             print(cpu, mem.padding(toLength: 10, withPad: " ", startingAt: 0), app.name, app.busiest)
         }
-        let now = Headroom.now(load: total / cores, diskBusy: sampler.diskBusy, gpuBusy: sampler.gpuBusy)
+        let now = Headroom.now(system, diskFreeGB: Headroom.diskFreeGB())
         precondition(apps.contains { $0.gpu > 0 }, "no per-app gpu readings")
         precondition(now.diskFreeGB > 0 && now.diskFreeGB < 1000, "disk space not read")
-        print("ok: \(apps.count) groups, \(Int(total))% of \(Int(cores * 100))%, headroom \(now.score)",
+        print("ok: \(apps.count) groups, load \(Int(system.load))% (per-app sum \(Int(total / cores))%), headroom \(now.score)",
               now.contributors.map { "\($0.name) \($0.score)" },
               "disk \(Int(now.diskFreeGB))GB free, \(Int(now.diskBusy))% busy, swap \(now.swapUsed >> 20)MB, gpu \(Int(now.gpuBusy))%",
               "top gpu: " + (apps.max { $0.gpu < $1.gpu }.map { "\($0.name) \(Int($0.gpu))%" } ?? "none"))
@@ -70,11 +77,10 @@ enum Main {
     // Renders the panel with live data to a PNG, to review layout without clicking the menu bar.
     @MainActor static func snapshot(to path: String, expanded: Bool) {
         let sampler = Sampler()
-        _ = sampler.sample()
+        _ = sampler.apps()
+        _ = sampler.system()
         sleep(1)
-        let apps = sampler.sample()
-        let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
-        let state = Snapshot(apps: apps, headroom: .now(load: load, diskBusy: sampler.diskBusy, gpuBusy: sampler.gpuBusy))
+        let state = Snapshot(apps: sampler.apps(), headroom: .now(sampler.system(), diskFreeGB: Headroom.diskFreeGB()))
         let renderer = ImageRenderer(content: Panel(state: state, expanded: expanded).background(.background))
         renderer.scale = 2
         let tiff = renderer.nsImage!.tiffRepresentation!
@@ -85,40 +91,76 @@ enum Main {
 
 @Observable
 final class Model {
+    /// For the panel. Refreshed every tick while it is open, else with each process walk.
     var state = Snapshot()
-    private let sampler = Sampler()
-    // Smoothing state, touched only on the timer queue.
-    private var smoothed: [String: (cpu: Double, disk: Double, gpu: Double)] = [:]
-    private var diskBusy = 0.0
-    private var gpuBusy = 0.0
-    private let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+    /// For the menu bar ring, in steps of 5: a 16pt ring cannot show less, and redrawing the
+    /// status item is the app's main idle cost. Both colour thresholds are multiples of 5,
+    /// so rounding down never shows the wrong colour.
+    var ringScore = 100
+
+    // Everything below is touched only on `queue`.
+    @ObservationIgnored private let queue = DispatchQueue(label: "local.nimmersatt.sampler", qos: .utility)
+    @ObservationIgnored private let timer: DispatchSourceTimer
+    @ObservationIgnored private let sampler = Sampler()
+    @ObservationIgnored private var system = SystemUsage()  // smoothed
+    @ObservationIgnored private var apps: [AppUsage] = []   // smoothed, from the latest process walk
+    @ObservationIgnored private var diskFreeGB = 1000.0
+    @ObservationIgnored private var ticks = 0
+    @ObservationIgnored private var lastAppsTick = 0
+    @ObservationIgnored private var panelOpen = false
 
     init() {
+        timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 2.0)
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            let state = self.tick()
-            DispatchQueue.main.async { self.state = state }
-        }
+        timer.setEventHandler { [weak self] in self?.publish() }
         timer.resume()
     }
 
-    // Smooths CPU, GPU and disk rates so a 2s spike neither names a culprit nor moves the score.
-    private func tick() -> Snapshot {
-        var apps = sampler.sample()
-        let w = Tuning.smoothing
-        for i in apps.indices {
-            if let old = smoothed[apps[i].id] {
-                apps[i].cpu = old.cpu * (1 - w) + apps[i].cpu * w
-                apps[i].disk = old.disk * (1 - w) + apps[i].disk * w
-                apps[i].gpu = old.gpu * (1 - w) + apps[i].gpu * w
-            }
+    /// The panel names apps, so the process list must be fresh while it is open. Closed, only
+    /// the ring is visible, and the score needs no per-process work.
+    func panel(open: Bool) {
+        queue.async {
+            self.panelOpen = open
+            if open { self.publish() }  // refresh now, not at the next tick
         }
-        smoothed = Dictionary(apps.map { ($0.id, ($0.cpu, $0.disk, $0.gpu)) }, uniquingKeysWith: { a, _ in a })
-        diskBusy = diskBusy * (1 - w) + sampler.diskBusy * w
-        gpuBusy = gpuBusy * (1 - w) + sampler.gpuBusy * w
-        let load = apps.reduce(0) { $0 + $1.cpu } / Double(ProcessInfo.processInfo.activeProcessorCount)
-        return Snapshot(apps: apps, headroom: .now(load: load, diskBusy: diskBusy, gpuBusy: gpuBusy))
+    }
+
+    private func publish() {
+        let state = tick()
+        let showState = panelOpen || lastAppsTick == ticks
+        let step = state.headroom.score / 5 * 5
+        DispatchQueue.main.async {
+            if step != self.ringScore { self.ringScore = step }  // assigning an equal value still redraws
+            if showState { self.state = state }
+        }
+    }
+
+    // Smooths rates so a 2s spike neither names a culprit nor moves the score.
+    private func tick() -> Snapshot {
+        let w = Tuning.smoothing
+        ticks += 1
+
+        let now = sampler.system()
+        system.load = system.load * (1 - w) + now.load * w
+        system.diskBusy = system.diskBusy * (1 - w) + now.diskBusy * w
+        system.gpuBusy = system.gpuBusy * (1 - w) + now.gpuBusy * w
+        if ticks % Tuning.diskSpaceTicks == 1 { diskFreeGB = Headroom.diskFreeGB() }
+
+        if panelOpen || ticks % Tuning.idleAppTicks == 1 {
+            var fresh = sampler.apps()
+            // After a gap the rates already average a long window; smooth only consecutive samples.
+            let wApps = ticks - lastAppsTick == 1 ? w : 1
+            let old = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for i in fresh.indices {
+                guard let before = old[fresh[i].id] else { continue }
+                fresh[i].cpu = before.cpu * (1 - wApps) + fresh[i].cpu * wApps
+                fresh[i].disk = before.disk * (1 - wApps) + fresh[i].disk * wApps
+                fresh[i].gpu = before.gpu * (1 - wApps) + fresh[i].gpu * wApps
+            }
+            apps = fresh
+            lastAppsTick = ticks
+        }
+        return Snapshot(apps: apps, headroom: .now(system, diskFreeGB: diskFreeGB))
     }
 }
 
@@ -129,15 +171,33 @@ struct NimmersattApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            Panel(state: model.state)
-                .background(GeometryReader { geo in WindowFit(height: geo.size.height) })
-                .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
+            PanelHost(model: model)
         } label: {
             // Headroom ring: full and default colour while calm; empties, orange then red, as room runs out.
-            Image(nsImage: Headroom.ring(model.state.headroom.score))
-                .accessibilityLabel("Headroom \(model.state.headroom.score) of 100")
+            // Reads only ringScore, so panel data changes do not redraw the status item.
+            Image(nsImage: Headroom.ring(model.ringScore))
+                .accessibilityLabel("Headroom \(model.ringScore) of 100")
         }
         .menuBarExtraStyle(.window)  // the system supplies the panel's glass; content adds no material
+    }
+}
+
+// Owns the panel's dependency on `model.state`, keeping it out of the scene body.
+private struct PanelHost: View {
+    let model: Model
+
+    var body: some View {
+        Panel(state: model.state)
+            .background(GeometryReader { geo in WindowFit(height: geo.size.height) })
+            .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
+            .onAppear {
+                model.panel(open: true)
+                log.info("panel open")
+            }
+            .onDisappear {
+                model.panel(open: false)
+                log.info("panel closed")
+            }
     }
 }
 
