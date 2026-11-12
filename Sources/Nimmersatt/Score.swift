@@ -58,22 +58,23 @@ extension Headroom {
         score >= Tuning.good ? nil : score >= Tuning.fair ? .systemOrange : .systemRed
     }
 
-    /// A ring that fills clockwise with pressure (100 - score). Used as the menu bar icon and
-    /// in the panel. A template image while calm, so it takes the surrounding default colour.
-    static func ring(_ score: Int) -> NSImage {
-        let color = alarm(score), pressure = Double(100 - score) / 100
-        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+    /// A ring filled clockwise to the score: full means all the room is left, and it empties
+    /// as headroom runs out. Used as the menu bar icon and in the panel. A template image while calm, so it takes the surrounding default colour.
+    static func ring(_ score: Int, size: CGFloat = 16, stroke: CGFloat = 2.5) -> NSImage {
+        let color = alarm(score), fill = Double(score) / 100
+        let radius = (size - stroke) / 2 - 0.75
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let ink = color ?? .black
             let center = NSPoint(x: rect.midX, y: rect.midY)
             let track = NSBezierPath()
-            track.appendArc(withCenter: center, radius: 6, startAngle: 0, endAngle: 360)
-            track.lineWidth = 2.5
+            track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360)
+            track.lineWidth = stroke
             ink.withAlphaComponent(0.3).setStroke()
             track.stroke()
-            if pressure > 0 {
+            if fill > 0 {
                 let arc = NSBezierPath()
-                arc.appendArc(withCenter: center, radius: 6, startAngle: 90, endAngle: 90 - 360 * pressure, clockwise: true)
-                arc.lineWidth = 2.5
+                arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * fill, clockwise: true)
+                arc.lineWidth = stroke
                 arc.lineCapStyle = .round
                 ink.setStroke()
                 arc.stroke()

@@ -104,7 +104,7 @@ struct NimmersattApp: App {
                 .background(GeometryReader { geo in WindowFit(height: geo.size.height) })
                 .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
         } label: {
-            // Pressure ring: default colour while calm, orange then red as headroom runs out.
+            // Headroom ring: full and default colour while calm; empties, orange then red, as room runs out.
             Image(nsImage: Headroom.ring(model.state.headroom.score))
                 .accessibilityLabel("Headroom \(model.state.headroom.score) of 100")
         }
@@ -133,7 +133,8 @@ private struct WindowFit: NSViewRepresentable {
 
 // Laid out like the system's Wi-Fi panel: bold title, inset dividers, bold section
 // headers, rows of round icon + name + trailing value, plain footer actions.
-// Default view is the score, a verdict and any culprits; Details holds the rest.
+// Default view is the score, a verdict, one ring per contributor and any culprits;
+// Details holds the app lists.
 struct Panel: View {
     let state: Snapshot
     @State var expanded = false
@@ -143,15 +144,28 @@ struct Panel: View {
         let culprits = state.culprits
 
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Headroom").fontWeight(.bold)
-                Spacer()
-                Text("\(headroom.score)").fontWeight(.bold)
-                Image(nsImage: Headroom.ring(headroom.score))
+            // Hierarchy: the score is the hero (large ring, number inside), named and explained
+            // beside it; the three contributors follow as smaller rings of the same shape.
+            HStack(spacing: 12) {
+                Image(nsImage: Headroom.ring(headroom.score, size: 56, stroke: 5))
+                    .overlay { Text("\(headroom.score)").font(.system(size: 20, weight: .semibold)) }
+                    .accessibilityElement()
+                    .accessibilityLabel("Headroom \(headroom.score) of 100")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Headroom").fontWeight(.bold)
+                    Text(state.verdict).foregroundStyle(.secondary)
+                }
             }
-            .padding(.top, 8)
-            .padding(.bottom, 2)
-            Text(state.verdict).foregroundStyle(.secondary).padding(.bottom, 8)
+            .padding(.top, 10)
+
+            // One ring per contributor, its glyph inside. Facts are in the tooltip.
+            HStack(spacing: 0) {
+                contributor("cpu", headroom.cpu, "CPU: \(Int(headroom.load))% of all cores busy")
+                contributor("memorychip", headroom.memory, "Memory: \(headroom.memoryFree)% free")
+                contributor("thermometer.medium", headroom.thermal,
+                            "Thermal: " + ["nominal", "fair", "serious", "critical"][headroom.thermalState.rawValue])
+            }
+            .padding(.vertical, 12)
 
             if !culprits.isEmpty {
                 Divider().padding(.bottom, 4)
@@ -165,12 +179,6 @@ struct Panel: View {
             Divider().padding(.bottom, 4)
             Action(title: "Details", expanded: expanded) { expanded.toggle() }
             if expanded {
-                section("Contributors") {
-                    Row(symbol: "cpu", name: "CPU", ring: headroom.cpu, detail: "\(Int(headroom.load))% of all cores busy")
-                    Row(symbol: "memorychip", name: "Memory", ring: headroom.memory, detail: "\(headroom.memoryFree)% free")
-                    Row(symbol: "thermometer.medium", name: "Thermal", ring: headroom.thermal,
-                        detail: ["Nominal", "Fair", "Serious", "Critical"][headroom.thermalState.rawValue])
-                }
                 section("CPU") {
                     ForEach(state.apps.sorted { $0.cpu > $1.cpu }.prefix(5)) { app in
                         Row(icon: app.icon, name: app.name, value: "\(Int(app.cpu))%",
@@ -196,6 +204,15 @@ struct Panel: View {
         .frame(width: 300)
     }
 
+    private func contributor(_ symbol: String, _ score: Int, _ fact: String) -> some View {
+        Image(nsImage: Headroom.ring(score, size: 28, stroke: 2.5))
+            .overlay { Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(.secondary) }
+            .frame(maxWidth: .infinity)
+            .help(fact)
+            .accessibilityElement()
+            .accessibilityLabel(fact)
+    }
+
     @ViewBuilder
     private func section(_ title: String, @ViewBuilder rows: () -> some View) -> some View {
         Divider().padding(.top, 4)
@@ -212,8 +229,7 @@ struct Row: View {
     var icon: NSImage?
     var symbol = "gearshape.fill"
     let name: String
-    var value = ""
-    var ring: Int?  // a contributor score, drawn as a pressure ring instead of a value
+    let value: String
     var detail: String?
 
     var body: some View {
@@ -233,11 +249,7 @@ struct Row: View {
                 }
             }
             Spacer(minLength: 8)
-            if let ring {
-                Image(nsImage: Headroom.ring(ring)).accessibilityLabel("\(ring) of 100")
-            } else {
-                Text(value).foregroundStyle(.secondary)
-            }
+            Text(value).foregroundStyle(.secondary)
         }
         .frame(height: 34)
     }
