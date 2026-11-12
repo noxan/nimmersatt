@@ -85,8 +85,8 @@ extension Headroom {
         score >= Tuning.good ? nil : score >= Tuning.fair ? .systemOrange : .systemRed
     }
 
-    /// A ring filled clockwise to the score: full means all the room is left, and it empties
-    /// as headroom runs out. Used as the menu bar icon and in the panel. A template image while calm, so it takes the surrounding default colour.
+    /// A ring filled to the score: full means all the room is left. It drains clockwise from
+    /// 12 o'clock as headroom runs out, like a countdown; what remains ends at 12. Used as the menu bar icon and in the panel. A template image while calm, so it takes the surrounding default colour.
     static func ring(_ score: Int, size: CGFloat = 16, stroke: CGFloat = 2.5) -> NSImage {
         let color = alarm(score), fill = Double(score) / 100
         let radius = (size - stroke) / 2 - 0.75
@@ -100,7 +100,7 @@ extension Headroom {
             track.stroke()
             if fill > 0 {
                 let arc = NSBezierPath()
-                arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * fill, clockwise: true)
+                arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 + 360 * fill, clockwise: false)
                 arc.lineWidth = stroke
                 arc.lineCapStyle = .round
                 ink.setStroke()
