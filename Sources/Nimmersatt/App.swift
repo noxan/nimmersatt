@@ -141,7 +141,8 @@ extension Main {
 
 @Observable
 final class Model {
-    /// For the panel. Refreshed every tick while it is open, else with each process walk.
+    /// For the panel. Refreshed every tick while it is open and not at all while it is closed:
+    /// the system keeps a closed panel's views alive, and they would render every update.
     var state = Snapshot()
     /// For the menu bar ring. Redrawing the status item is the app's main idle cost, so it
     /// follows the score only on a colour change or a move of 5 or more: an 18pt ring cannot
@@ -178,7 +179,7 @@ final class Model {
 
     private func publish() {
         let state = tick()
-        let showState = panelOpen || lastAppsTick == ticks
+        let showState = panelOpen
         let score = state.headroom.score
         DispatchQueue.main.async {
             if Headroom.alarm(score) != Headroom.alarm(self.ringScore) || abs(score - self.ringScore) >= 5 {
