@@ -170,6 +170,7 @@ final class Model {
     /// the ring is visible, and the score needs no per-process work.
     func panel(open: Bool) {
         queue.async {
+            guard open != self.panelOpen else { return }
             self.panelOpen = open
             if open { self.publish() }  // refresh now, not at the next tick
         }
@@ -240,26 +241,48 @@ private struct PanelHost: View {
 
     var body: some View {
         Panel(state: model.state)
-            .background(GeometryReader { geo in WindowFit(height: geo.size.height) })
+            .background(GeometryReader { geo in
+                WindowFit(height: geo.size.height) { open in
+                    model.panel(open: open)
+                    log.info("panel \(open ? "open" : "closed", privacy: .public)")
+                }
+            })
             .frame(maxHeight: .infinity, alignment: .top)  // never re-center while the window catches up
-            .onAppear {
-                model.panel(open: true)
-                log.info("panel open")
-            }
-            .onDisappear {
-                model.panel(open: false)
-                log.info("panel closed")
-            }
     }
 }
 
 // MenuBarExtra's window grows with its content but never shrinks back, leaving the
 // panel floating in an oversized window. Pin the window height to the content height
 // ourselves, top edge fixed. Idempotent, so it agrees with the system when that resizes.
+//
+// Also reports whether the window is on screen. onAppear/onDisappear cannot: the system keeps
+// the panel's views alive after it closes, so onDisappear never fires and the app would go on
+// sampling and rendering for a hidden panel (10% CPU instead of under 1%).
 private struct WindowFit: NSViewRepresentable {
     let height: CGFloat
+    let visible: (Bool) -> Void
 
-    func makeNSView(context: Context) -> NSView { NSView() }
+    final class Probe: NSView {
+        var visible: (Bool) -> Void = { _ in }
+        private var observer: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            observer.map(NotificationCenter.default.removeObserver)
+            observer = window.map { window in
+                NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                                                       object: window, queue: .main) { [weak self] _ in
+                    self?.visible(window.occlusionState.contains(.visible))
+                }
+            }
+            visible(window?.occlusionState.contains(.visible) ?? false)
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let probe = Probe()
+        probe.visible = visible
+        return probe
+    }
 
     func updateNSView(_ view: NSView, context: Context) {
         // Synchronous on purpose: deferring a runloop turn draws one frame at the old size.
