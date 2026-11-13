@@ -69,7 +69,7 @@ enum Main {
             print(cpu, mem.padding(toLength: 10, withPad: " ", startingAt: 0), app.name, app.busiest)
         }
         let now = Headroom.now(system, diskFreeGB: Headroom.diskFreeGB())
-        precondition(apps.contains { $0.gpu > 0 }, "no per-app gpu readings")
+        precondition(sampler.hasGPUCounters, "no per-app gpu counters")
         precondition(now.diskFreeGB > 0 && now.diskFreeGB < 1000, "disk space not read")
         print("ok: \(apps.count) groups, load \(Int(system.load))% (per-app sum \(Int(total / cores))%), headroom \(now.score)",
               now.contributors.map { "\($0.name) \($0.score)" },

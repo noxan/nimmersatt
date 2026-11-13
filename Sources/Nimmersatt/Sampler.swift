@@ -35,6 +35,9 @@ final class Sampler {
     private var lastDiskTime: UInt64 = 0
     private var lastTicks: (busy: UInt64, total: UInt64) = (0, 0)
     private var lastGPU: [pid_t: UInt64] = [:]  // cumulative GPU ns per pid
+    /// For the self-check: the registry still reports GPU time per process. Cumulative, so it
+    /// holds on a quiet screen too, where no app uses the GPU during the sample.
+    var hasGPUCounters: Bool { lastGPU.values.contains { $0 > 0 } }
     private var identity: [pid_t: (name: String, icon: NSImage?)] = [:]
 
     // rusage times are mach ticks, not ns: 125/3 on Apple Silicon, 1/1 on Intel.
