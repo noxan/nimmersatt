@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 - 2026-11-15
+
+### Features
+
+- open at login toggle in the panel footer
+
 ## 0.2.0 - 2026-11-13
 
 ### Features
