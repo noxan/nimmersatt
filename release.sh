@@ -55,9 +55,19 @@ echo "$notes"
 
 trap 'git checkout -- Info.plist' ERR
 plist "Set :CFBundleShortVersionString $next"
-make app
+# signing: the Developer ID in the keychain, else ad-hoc. Notarizing needs a notarytool profile:
+#   xcrun notarytool store-credentials nimmersatt   (once; Apple ID, team ID, app-specific password)
+sign=${SIGN_ID:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application[^"]*\)".*/\1/p' | head -1)}
+make app SIGN="${sign:--}"
 zip=.build/Nimmersatt-$next.zip
 ditto -c -k --keepParent Nimmersatt.app "$zip"
+if [ -n "$sign" ] && xcrun notarytool history --keychain-profile "${NOTARY_PROFILE:-nimmersatt}" >/dev/null 2>&1; then
+  xcrun notarytool submit "$zip" --keychain-profile "${NOTARY_PROFILE:-nimmersatt}" --wait || die "notarization failed"
+  xcrun stapler staple Nimmersatt.app
+  ditto -c -k --keepParent Nimmersatt.app "$zip"
+else
+  echo "release: not notarized (no Developer ID or notarytool profile)" >&2
+fi
 trap - ERR
 
 {
