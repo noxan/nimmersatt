@@ -7,6 +7,8 @@ enum Tuning {
     static let hogGPU = 50.0         // an app is "eating" the GPU at half of its time, smoothed
     static let gpuIdle = 30.0        // GPU utilisation a resting desktop shows anyway; scored as free
     static let hogDisk = 50e6        // an app is "eating" disk at 50MB/s read + written, smoothed
+    static let busyDisk = 50.0       // disk busy %: below the byte threshold, name the top writers anyway
+    static let minBusyDisk = 1e6     // ...if they move at least 1MB/s
     static let roomyDiskGB = 40.0    // free space at which the disk scores 100; below, linear to 0
     static let diskSaturation = 4.0  // I/O operations in flight, on average, that count as 100% busy
     static let diskWeight = 0.6      // disk counts less: alone it can pull the score to 40 (orange), not lower
@@ -176,6 +178,12 @@ struct Snapshot {
         out += apps.filter { $0.disk >= Tuning.hogDisk }
             .sorted { $0.disk > $1.disk }
             .map { Culprit(app: $0, value: Int64($0.disk).formatted(.byteCount(style: .file)) + "/s") }
+        if headroom.diskBusy >= Tuning.busyDisk {
+            // Busy from many small operations: bytes stay under the hog threshold, so name the top movers.
+            out += apps.filter { $0.disk >= Tuning.minBusyDisk && $0.disk < Tuning.hogDisk }
+                .sorted { $0.disk > $1.disk }.prefix(3)
+                .map { Culprit(app: $0, value: Int64($0.disk).formatted(.byteCount(style: .file)) + "/s") }
+        }
         if headroom.memory < Tuning.tightMemory {
             out += apps.sorted { $0.memory > $1.memory }.prefix(3)
                 .map { Culprit(app: $0, value: $0.memory.formatted(.byteCount(style: .memory))) }
