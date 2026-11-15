@@ -16,13 +16,13 @@
 - **five contributors**: cpu, memory, gpu, thermal, disk. the weakest sets the score, and every further strained one compounds it.
 - **names the culprit**: any app holding a full core, half the gpu or 50MB/s of disk, plus the 3 biggest apps when memory is tight.
 - **details**: top 5 apps by cpu and by memory, helpers grouped under the app you launched, like activity monitor.
-- **cheap**: 0.2-0.8% cpu while idle, samples every 2s, no privileges needed.
+- **cheap**: 0.2-0.8% cpu while idle, samples every 2s, no privileges needed. an opt-in root helper adds disk use of root daemons like time machine.
 
 ## install
 
 requires macos 14 or later.
 
-download `Nimmersatt-<version>.zip` from [releases](https://github.com/noxan/nimmersatt/releases), unzip and open `Nimmersatt.app`. the build is ad-hoc signed, so the first launch needs right-click, open.
+download `Nimmersatt-<version>.zip` from [releases](https://github.com/noxan/nimmersatt/releases), unzip and open `Nimmersatt.app`. the build is signed and notarized.
 
 or build from source with Xcode 26 or later installed (the icon build uses `actool`):
 
