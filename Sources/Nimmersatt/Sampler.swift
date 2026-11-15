@@ -23,18 +23,58 @@ struct AppUsage: Identifiable {
 }
 
 /// Plain-English names for system daemons that have no app bundle to name them.
-private let daemonNames: [String: (name: String, symbol: String)] = [
-    "backupd": ("Time Machine", "clock.arrow.circlepath"),
-    "mds": ("Spotlight", "magnifyingglass"), "mds_stores": ("Spotlight", "magnifyingglass"),
-    "mdworker_shared": ("Spotlight", "magnifyingglass"), "mdworker": ("Spotlight", "magnifyingglass"),
-    "visualintelligenced": ("Visual Intelligence", "eye"),
-    "ANECompilerService": ("Neural Engine", "brain"),
-    "softwareupdated": ("Software Update", "arrow.down.circle"),
-    "airportd": ("Wi-Fi", "wifi"),
-    "com.apple.DriverKit-AppleBCMWLAN": ("Wi-Fi", "wifi"),
-    "kernel_task": ("Kernel", "cpu"),
-    "WindowServer": ("Window Server", "macwindow"),
-]
+/// Naming only: says what the daemon is, never why it is busy.
+private let daemonNames: [String: (name: String, symbol: String)] = {
+    let groups: [(String, String, [String])] = [
+        ("Time Machine", "clock.arrow.circlepath", ["backupd", "backupd-helper", "tmutil"]),
+        ("Spotlight", "magnifyingglass", ["mds", "mds_stores", "mdworker", "mdworker_shared", "mdsync", "corespotlightd", "spotlightknowledged"]),
+        ("Apple Intelligence", "sparkles", ["modelmanagerd", "modelcatalogd", "TGOnDeviceInferenceProviderService", "intelligenceplatformd", "generativeexperiencesd"]),
+        ("Visual Intelligence", "eye", ["visualintelligenced"]),
+        ("Siri & Shortcuts", "wand.and.stars", ["siriactionsd", "duetexpertd", "coreduetd", "suggestd", "knowledge-agent", "siriknowledged", "assistantd", "assistant_service", "sirittsd", "parsecd", "corespeechd"]),
+        ("Neural Engine", "brain", ["ANECompilerService", "ANEStorageProcessor", "aned"]),
+        ("Metal Shaders", "cube", ["MTLCompilerService", "MTLAssetUpgraderD"]),
+        ("Photos Analysis", "photo.on.rectangle", ["photoanalysisd", "mediaanalysisd", "photolibraryd", "photosanalysisd"]),
+        ("iCloud", "icloud", ["cloudd", "bird", "cloudpaird", "cloudphotod", "fileproviderd", "brctl", "CloudTelemetryService"]),
+        ("Background Downloads", "arrow.down.circle", ["nsurlsessiond", "nsurlstoraged", "mobileassetd", "MobileAssetUpgradeAgent"]),
+        ("Software Update", "arrow.down.app", ["softwareupdated", "suhelperd", "SoftwareUpdateSubscriber", "softwareupdate_notify_agent", "SoftwareUpdateNotificationManager", "mobilesoftwareupdate"]),
+        ("Installer", "shippingbox", ["installd", "system_installd", "installcoordinationd", "InstallerProgress", "installer"]),
+        ("App Store", "bag", ["appstoreagent", "storedownloadd", "storeassetd", "storeaccountd", "commerce", "AppStore"]),
+        ("XProtect", "checkmark.shield", ["xprotectd", "XprotectService", "XProtectPluginService", "XProtectBridgeService", "XProtect"]),
+        ("Security", "lock.shield", ["syspolicyd", "amfid", "trustd", "securityd", "secd", "secinitd", "tccd", "sandboxd", "endpointsecurityd", "taskgated"]),
+        ("Keychain", "key", ["keybagd", "ctkd", "ctkahp", "CryptoTokenKit", "SecurityAgent"]),
+        ("Wi-Fi", "wifi", ["airportd", "wifip2pd", "wifianalyticsd", "WiFiCloudAssetsXPCService", "wifivelocityd", "WiFiAgent", "com.apple.DriverKit-AppleBCMWLAN", "WirelessRadioManagerd"]),
+        ("Bluetooth", "wave.3.right", ["bluetoothd", "bluetoothuserd", "IOUserBluetoothSerialDriver", "BTLEServerAgent"]),
+        ("Network", "network", ["mDNSResponder", "mDNSResponderHelper", "networkd", "nesessionmanager", "nehelper", "NetworkExtension", "symptomsd", "netbiosd", "configd", "apsd"]),
+        ("Audio", "speaker.wave.2", ["coreaudiod", "audioaccessoryd", "audiomxd", "com.apple.audio.Core-Audio-Driver-Service", "com.apple.audio.DriverHelper", "com.apple.audio.SandboxHelper", "systemsoundserverd"]),
+        ("Disk Images", "opticaldiscdrive", ["diskimagesiod", "diskimagescontroller", "diskimages-helper", "hdiejectd", "simdiskimaged"]),
+        ("Storage", "internaldrive", ["storagekitd", "diskarbitrationd", "fseventsd", "apfsd", "fskitd", "revisiond", "mmaintenanced"]),
+        ("Crash Reporting", "ladybug", ["ReportCrash", "spindump", "tailspind", "SubmitDiagInfo", "diagnosticd", "diagnostics_agent", "ReportSystemMemory", "osanalyticshelper"]),
+        ("Logging", "doc.text", ["logd", "logd_helper", "syslogd", "systemstats", "powerlogHelperd", "PerfPowerService", "PerfPowerTelemetryClientRegistrationService", "rtcreportingd", "triald", "triald_system", "TrialArchivingService"]),
+        ("Power", "bolt", ["powerd", "thermalmonitord", "powerexperienced", "peakpowermanager", "PowerUIAgent", "ioupsd", "watchdogd"]),
+        ("Location Services", "location", ["locationd", "geod", "com.apple.geod", "searchpartyd", "findmydeviced", "nearbyd"]),
+        ("Messages & Sharing", "message", ["imagent", "identityservicesd", "sharingd", "rapportd", "IMDPersistenceAgent", "AirPlayXPCHelper", "ScreensharingAgent", "screensharingd"]),
+        ("Devices", "cable.connector", ["usbmuxd", "hidd", "UVCAssistant", "AppleDeviceQueryService", "AppleDeviceQuery", "ThunderboltAccessoryUpdater", "ThunderboltAccessoryManager", "StandaloneHIDAudio", "nfcd", "bootpd"]),
+        ("Launch Services", "square.grid.2x2", ["lsd", "launchservicesd", "iconservicesd", "iconservicesagent", "coreservicesd", "UserEventAgent", "cfprefsd", "distnoted", "notifyd", "usermanagerd", "runningboardd"]),
+        ("Accounts", "person.crop.circle", ["akd", "accountsd", "opendirectoryd", "kdc", "GSSCred", "CloudKeychainProxy"]),
+        ("Configuration", "gearshape.2", ["mobileactivationd", "ManagedClient", "ManagedConfigurationAgent", "managedappdistributiond", "remotemanagementd", "profiles", "mdmclient", "installcoordinationd", "LegacyProfilesSubscriber", "ManagedAppsSubscriber", "MigrationSubscriber", "ManagementTestSubscriber", "ManagedPreferencesSubscriber"]),
+        ("Wallpaper", "photo", ["wallpaperexportd", "WallpaperAgent", "WallpaperAerialsExtension"]),
+        ("Kernel", "cpu", ["kernel_task", "kernelmanagerd", "kernelmanager_helper", "KernelEventAgent", "sysextd", "systemextensionsd"]),
+        ("Window Server", "macwindow", ["WindowServer", "ViewBridgeAuxiliary", "loginwindow"]),
+        ("System Services", "gearshape.fill", ["launchd", "sysmond", "timed", "smd", "seld", "seputil", "systemmigrationd", "systemstatusd"]),
+    ]
+    var out: [String: (name: String, symbol: String)] = [:]
+    for (name, symbol, procs) in groups { for p in procs where out[p] == nil { out[p] = (name, symbol) } }
+    return out
+}()
+
+/// `ps` shows other users' processes as "(name)", cut to 16 characters.
+private func daemon(_ raw: String) -> (name: String, symbol: String, process: String)? {
+    let bare = raw.trimmingCharacters(in: CharacterSet(charactersIn: "()"))
+    let hit = daemonNames[bare] ?? (bare.count >= 15 ? daemonNames.first { $0.key.hasPrefix(bare) }?.value : nil)
+    guard let hit else { return nil }
+    let same = hit.name.replacingOccurrences(of: " ", with: "") == bare
+    return (hit.name, hit.symbol, same ? "" : bare)
+}
 
 struct SystemUsage {
     var load = 0.0      // percent of all cores busy
@@ -56,7 +96,7 @@ final class Sampler {
     /// For the self-check: the registry still reports GPU time per process. Cumulative, so it
     /// holds on a quiet screen too, where no app uses the GPU during the sample.
     var hasGPUCounters: Bool { lastGPU.values.contains { $0 > 0 } }
-    private var identity: [pid_t: (name: String, icon: NSImage?)] = [:]
+    private var identity: [pid_t: (name: String, icon: NSImage?, symbol: String, process: String)] = [:]
 
     // rusage times are mach ticks, not ns: 125/3 on Apple Silicon, 1/1 on Intel.
     private let nsPerTick: Double = {
@@ -129,7 +169,7 @@ final class Sampler {
             let key = "app:\(owner)"
             var group = groups[key] ?? {
                 let who = identify(owner)
-                return AppUsage(id: key, name: who.name, icon: who.icon)
+                return AppUsage(id: key, name: who.name, icon: who.icon, symbol: who.symbol, process: who.process)
             }()
             group.cpu += cpu
             group.memory += info.ri_phys_footprint
@@ -144,9 +184,10 @@ final class Sampler {
 
         for p in roots ? rootProcesses(unreadable) : [] {
             let key = "root:\(p.name)"
-            var group = groups[key] ?? AppUsage(id: key, name: daemonNames[p.name]?.name ?? p.name,
-                                                symbol: daemonNames[p.name]?.symbol ?? "gearshape.fill",
-                                                process: daemonNames[p.name].map { $0.name.replacingOccurrences(of: " ", with: "") == p.name } ?? true ? "" : p.name)
+            var group = groups[key] ?? {
+                guard let d = daemon(p.name) else { return AppUsage(id: key, name: p.name) }
+                return AppUsage(id: key, name: d.name, symbol: d.symbol, process: d.process)
+            }()
             group.cpu += p.cpu
             group.memory += p.memory
             group.gpu += gpu[p.pid] ?? 0
@@ -235,10 +276,13 @@ final class Sampler {
         IORegistryEntryCreateCFProperty(entry, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
     }
 
-    private func identify(_ pid: pid_t) -> (name: String, icon: NSImage?) {
+    private func identify(_ pid: pid_t) -> (name: String, icon: NSImage?, symbol: String, process: String) {
         if let hit = identity[pid] { return hit }
         let app = NSRunningApplication(processIdentifier: pid)
-        let value = (name: app?.localizedName ?? processName(pid), icon: app?.icon)
+        let raw = processName(pid)
+        let d = app == nil ? daemon(raw) : nil
+        let value = (name: app?.localizedName ?? d?.name ?? raw, icon: app?.icon,
+                     symbol: d?.symbol ?? "gearshape.fill", process: d?.process ?? "")
         identity[pid] = value
         return value
     }
