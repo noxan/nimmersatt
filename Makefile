@@ -1,3 +1,7 @@
+# SIGN: codesign identity. "-" is ad-hoc; a Developer ID adds the hardened runtime notarization needs.
+SIGN ?= -
+SIGNFLAGS = $(if $(filter -,$(SIGN)),,--options runtime --timestamp)
+
 app: .build/icon-assets/Assets.car Assets/AppIcon-preview.png
 	swift build -c release
 	rm -rf Nimmersatt.app && mkdir -p Nimmersatt.app/Contents/{MacOS,Resources}
@@ -8,8 +12,8 @@ app: .build/icon-assets/Assets.car Assets/AppIcon-preview.png
 	cp Helper/local.nimmersatt.helper.plist Nimmersatt.app/Contents/Library/LaunchDaemons/
 	cp .build/icon-assets/AppIcon.icns Nimmersatt.app/Contents/Resources/
 	cp .build/icon-assets/Assets.car Nimmersatt.app/Contents/Resources/
-	codesign --force -s - -i local.nimmersatt.helper Nimmersatt.app/Contents/MacOS/NimmersattHelper
-	codesign --force -s - Nimmersatt.app
+	codesign --force -s "$(SIGN)" $(SIGNFLAGS) -i local.nimmersatt.helper Nimmersatt.app/Contents/MacOS/NimmersattHelper
+	codesign --force -s "$(SIGN)" $(SIGNFLAGS) Nimmersatt.app
 
 .build/icon-assets/Assets.car: Assets/AppIcon.png Assets/AppIcon.icon/icon.json
 	mkdir -p .build/AppIcon.icon/Assets .build/icon-assets
