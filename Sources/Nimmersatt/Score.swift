@@ -171,7 +171,7 @@ struct Snapshot {
     var culprits: [Culprit] {
         var out = apps.filter { $0.cpu >= Tuning.hogCPU }
             .sorted { $0.cpu > $1.cpu }
-            .map { Culprit(app: $0, value: "\(Int($0.cpu))%", detail: $0.busiestCPU >= 1 ? $0.busiest : nil) }
+            .map { Culprit(app: $0, value: "\(Int($0.cpu))%", detail: $0.detail) }
         out += apps.filter { $0.gpu >= Tuning.hogGPU }
             .sorted { $0.gpu > $1.gpu }
             .map { Culprit(app: $0, value: "\(Int($0.gpu))% GPU") }

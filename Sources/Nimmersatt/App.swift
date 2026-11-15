@@ -352,7 +352,7 @@ struct Panel: View {
             if !culprits.isEmpty {
                 Divider().padding(.bottom, 4)
                 ForEach(culprits) { culprit in
-                    Row(icon: culprit.app.icon, name: culprit.app.name, value: culprit.value, detail: culprit.detail)
+                    Row(icon: culprit.app.icon, symbol: culprit.app.symbol, name: culprit.app.name, value: culprit.value, detail: culprit.detail)
                 }
                 Spacer().frame(height: 4)
             }
@@ -362,13 +362,13 @@ struct Panel: View {
             if expanded {
                 section("CPU") {
                     ForEach(state.apps.sorted { $0.cpu > $1.cpu }.prefix(5)) { app in
-                        Row(icon: app.icon, name: app.name, value: "\(Int(app.cpu))%",
-                            detail: app.busiestCPU >= 1 ? app.busiest : nil)
+                        Row(icon: app.icon, symbol: app.symbol, name: app.name, value: "\(Int(app.cpu))%",
+                            detail: app.detail)
                     }
                 }
                 section("Memory") {
                     ForEach(state.apps.sorted { $0.memory > $1.memory }.prefix(5)) { app in
-                        Row(icon: app.icon, name: app.name, value: app.memory.formatted(.byteCount(style: .memory)))
+                        Row(icon: app.icon, symbol: app.symbol, name: app.name, value: app.memory.formatted(.byteCount(style: .memory)))
                     }
                 }
             }

@@ -16,7 +16,25 @@ struct AppUsage: Identifiable {
     var gpu = 0.0            // percent of GPU time
     var busiest = ""         // busiest process in the group, if not the app itself
     var busiestCPU = 0.0
+    var symbol = "gearshape.fill"  // SF Symbol shown when there is no app icon
+    var process = ""         // the daemon's own name, when `name` is a friendlier label for it
+    /// Second line under the name: the daemon itself, else the busiest child worth mentioning.
+    var detail: String? { process.isEmpty ? (busiestCPU >= 1 ? busiest : nil) : process }
 }
+
+/// Plain-English names for system daemons that have no app bundle to name them.
+private let daemonNames: [String: (name: String, symbol: String)] = [
+    "backupd": ("Time Machine", "clock.arrow.circlepath"),
+    "mds": ("Spotlight", "magnifyingglass"), "mds_stores": ("Spotlight", "magnifyingglass"),
+    "mdworker_shared": ("Spotlight", "magnifyingglass"), "mdworker": ("Spotlight", "magnifyingglass"),
+    "visualintelligenced": ("Visual Intelligence", "eye"),
+    "ANECompilerService": ("Neural Engine", "brain"),
+    "softwareupdated": ("Software Update", "arrow.down.circle"),
+    "airportd": ("Wi-Fi", "wifi"),
+    "com.apple.DriverKit-AppleBCMWLAN": ("Wi-Fi", "wifi"),
+    "kernel_task": ("Kernel", "cpu"),
+    "WindowServer": ("Window Server", "macwindow"),
+]
 
 struct SystemUsage {
     var load = 0.0      // percent of all cores busy
@@ -126,7 +144,9 @@ final class Sampler {
 
         for p in roots ? rootProcesses(unreadable) : [] {
             let key = "root:\(p.name)"
-            var group = groups[key] ?? AppUsage(id: key, name: p.name)
+            var group = groups[key] ?? AppUsage(id: key, name: daemonNames[p.name]?.name ?? p.name,
+                                                symbol: daemonNames[p.name]?.symbol ?? "gearshape.fill",
+                                                process: daemonNames[p.name] == nil ? "" : p.name)
             group.cpu += p.cpu
             group.memory += p.memory
             group.gpu += gpu[p.pid] ?? 0
