@@ -119,7 +119,7 @@ extension Headroom {
     /// system's own status icons: the outer edge is fixed and the stroke grows inward.
     /// Alarm escalates once more: a core dot appears with orange and grows with pressure, and
     /// red fills the core completely, so it reads as a solid alarm at a glance.
-    static func ring(_ score: Int, size: CGFloat = 18, stroke: CGFloat = 3) -> NSImage {
+    static func ring(_ score: Int, size: CGFloat = 16, stroke: CGFloat = 3) -> NSImage {
         let color = alarm(score), pressure = Double(100 - score) / 100
         let width = stroke * (0.6 + 0.8 * pressure)
         let radius = (size - width) / 2 - 0.5
