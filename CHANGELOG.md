@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 - 2026-11-15
+
+### Features
+
+- move login and root toggles into a Settings disclosure
+- optional root helper for per-process disk use of root daemons
+- friendly names and icons for ~220 common system daemons
+- friendly names and icons for system daemons
+
+### Fixes
+
+- photolibraryd is the Photos library, not analysis
+- hide the process name when it only differs by spacing
+- name the top disk movers when the disk is busy
+- menu bar ring slightly too big, 18pt to 16pt
+
 ## 0.3.0 - 2026-11-15
 
 ### Features
