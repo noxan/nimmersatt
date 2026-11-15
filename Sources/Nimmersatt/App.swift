@@ -1,4 +1,5 @@
 import OSLog
+import ServiceManagement
 import SwiftUI
 
 private let log = Logger(subsystem: "local.nimmersatt", category: "panel")
@@ -304,6 +305,7 @@ private struct WindowFit: NSViewRepresentable {
 struct Panel: View {
     let state: Snapshot
     @State var expanded = false
+    @State private var autostart = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         let headroom = state.headroom
@@ -374,6 +376,14 @@ struct Panel: View {
             Divider().padding(.vertical, 4)
             Action(title: "Activity Monitor…") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
+            }
+            Action(title: "Open at Login", checked: autostart) {
+                do {
+                    if autostart { try SMAppService.mainApp.unregister() } else { try SMAppService.mainApp.register() }
+                } catch {
+                    Logger(subsystem: "nimmersatt", category: "app").error("autostart: \(error.localizedDescription)")
+                }
+                autostart = SMAppService.mainApp.status == .enabled
             }
             Action(title: "Quit Nimmersatt") { NSApp.terminate(nil) }
         }
@@ -468,6 +478,7 @@ struct Row: View {
 struct Action: View {
     let title: String
     var expanded: Bool?  // non-nil draws a disclosure chevron
+    var checked: Bool?  // non-nil draws a checkmark when true
     let action: () -> Void
     @State private var hovered = false
 
@@ -481,6 +492,7 @@ struct Action: View {
                         .fontWeight(.semibold)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
+                if checked == true { Image(systemName: "checkmark").fontWeight(.semibold) }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
