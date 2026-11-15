@@ -1,5 +1,6 @@
 import AppKit
 import IOKit
+import NimmersattShared
 
 // Private API, the one Activity Monitor groups by: maps helpers (browser tabs,
 // WebKit content, shell children) to the app the user actually launched.
@@ -89,6 +90,7 @@ struct SystemUsage {
 final class Sampler {
     private var last: [pid_t: (cpu: Double, io: UInt64)] = [:]  // cumulative ns and bytes per pid
     private var lastTime: UInt64 = 0
+    private var lastRootIO: [pid_t: UInt64] = [:]  // helper bytes per root pid
     private var lastSystemTime: UInt64 = 0
     private var lastDiskTime: UInt64 = 0
     private var lastTicks: (busy: UInt64, total: UInt64) = (0, 0)
@@ -182,6 +184,9 @@ final class Sampler {
             groups[key] = group
         }
 
+        // With the root helper on, the processes libproc hides get their disk use from it.
+        let helperIO = roots ? RootHelper.diskBytes() : nil
+        var rootIO: [pid_t: UInt64] = [:]
         for p in roots ? rootProcesses(unreadable) : [] {
             let key = "root:\(p.name)"
             var group = groups[key] ?? {
@@ -191,10 +196,15 @@ final class Sampler {
             group.cpu += p.cpu
             group.memory += p.memory
             group.gpu += gpu[p.pid] ?? 0
+            if let io = helperIO?[p.pid] {
+                rootIO[p.pid] = io
+                if let before = lastRootIO[p.pid], io >= before { group.disk += Double(io - before) / (elapsed / 1e9) }
+            }
             groups[key] = group
         }
 
         last = current
+        lastRootIO = rootIO
         identity = identity.filter { owners.contains($0.key) }
         return Array(groups.values)
     }

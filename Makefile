@@ -3,8 +3,12 @@ app: .build/icon-assets/Assets.car Assets/AppIcon-preview.png
 	rm -rf Nimmersatt.app && mkdir -p Nimmersatt.app/Contents/{MacOS,Resources}
 	cp .build/release/Nimmersatt Nimmersatt.app/Contents/MacOS/
 	cp Info.plist Nimmersatt.app/Contents/
+	cp .build/release/NimmersattHelper Nimmersatt.app/Contents/MacOS/
+	mkdir -p Nimmersatt.app/Contents/Library/LaunchDaemons
+	cp Helper/local.nimmersatt.helper.plist Nimmersatt.app/Contents/Library/LaunchDaemons/
 	cp .build/icon-assets/AppIcon.icns Nimmersatt.app/Contents/Resources/
 	cp .build/icon-assets/Assets.car Nimmersatt.app/Contents/Resources/
+	codesign --force -s - -i local.nimmersatt.helper Nimmersatt.app/Contents/MacOS/NimmersattHelper
 	codesign --force -s - Nimmersatt.app
 
 .build/icon-assets/Assets.car: Assets/AppIcon.png Assets/AppIcon.icon/icon.json

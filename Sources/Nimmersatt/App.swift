@@ -1,5 +1,6 @@
 import OSLog
 import ServiceManagement
+import NimmersattShared
 import SwiftUI
 
 private let log = Logger(subsystem: "local.nimmersatt", category: "panel")
@@ -69,6 +70,7 @@ enum Main {
             let mem = app.memory.formatted(.byteCount(style: .memory))
             print(cpu, mem.padding(toLength: 10, withPad: " ", startingAt: 0), app.name, app.busiest)
         }
+        precondition(!collectDiskBytes().isEmpty, "helper counters unreadable")
         let now = Headroom.now(system, diskFreeGB: Headroom.diskFreeGB())
         // CI runners are VMs without a GPU in the IO registry.
         precondition(sampler.hasGPUCounters || ProcessInfo.processInfo.environment["CI"] != nil, "no per-app gpu counters")
@@ -306,6 +308,7 @@ struct Panel: View {
     let state: Snapshot
     @State var expanded = false
     @State private var autostart = SMAppService.mainApp.status == .enabled
+    @State private var root = RootHelper.status
 
     var body: some View {
         let headroom = state.headroom
@@ -349,10 +352,18 @@ struct Panel: View {
             }
             .padding(.vertical, 14)
 
-            if !culprits.isEmpty {
+            // Busy disk, nobody to blame: root daemons are invisible without the helper.
+            let blind = root != .enabled && headroom.diskBusy >= Tuning.busyDisk
+                && !state.apps.contains { $0.disk >= Tuning.hogDisk }
+            if !culprits.isEmpty || blind {
                 Divider().padding(.bottom, 4)
                 ForEach(culprits) { culprit in
                     Row(icon: culprit.app.icon, symbol: culprit.app.symbol, name: culprit.app.name, value: culprit.value, detail: culprit.detail)
+                }
+                if blind {
+                    Button(action: toggleRoot) {
+                        Row(symbol: "lock.shield", name: "Root access", value: "Enable", detail: "Read-only disk counters")
+                    }.buttonStyle(.plain)
                 }
                 Spacer().frame(height: 4)
             }
@@ -385,12 +396,26 @@ struct Panel: View {
                 }
                 autostart = SMAppService.mainApp.status == .enabled
             }
+            Action(title: root == .requiresApproval ? "Approve root disk details…" : "Root disk details",
+                   checked: root == .enabled, action: toggleRoot)
             Action(title: "Quit Nimmersatt") { NSApp.terminate(nil) }
         }
         .monospacedDigit()
+        // Approval happens in System Settings: pick it up without reopening the panel.
+        .task(id: root) {
+            while root == .requiresApproval {
+                try? await Task.sleep(for: .seconds(1))
+                root = RootHelper.status
+            }
+        }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .frame(width: 300)
+    }
+
+    private func toggleRoot() {
+        if RootHelper.enabled { RootHelper.disable() } else { RootHelper.enable() }
+        root = RootHelper.status
     }
 
     private func contributor(_ symbol: String, _ score: Int, _ fact: String) -> some View {
