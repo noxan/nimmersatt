@@ -307,6 +307,7 @@ private struct WindowFit: NSViewRepresentable {
 struct Panel: View {
     let state: Snapshot
     @State var expanded = false
+    @State private var settings = false
     @State private var autostart = SMAppService.mainApp.status == .enabled
     @State private var root = RootHelper.status
 
@@ -388,16 +389,19 @@ struct Panel: View {
             Action(title: "Activity Monitor…") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
             }
-            Action(title: "Open at Login", checked: autostart) {
-                do {
-                    if autostart { try SMAppService.mainApp.unregister() } else { try SMAppService.mainApp.register() }
-                } catch {
-                    Logger(subsystem: "nimmersatt", category: "app").error("autostart: \(error.localizedDescription)")
+            Action(title: "Settings", expanded: settings) { settings.toggle() }
+            if settings {
+                Action(title: "Open at Login", checked: autostart) {
+                    do {
+                        if autostart { try SMAppService.mainApp.unregister() } else { try SMAppService.mainApp.register() }
+                    } catch {
+                        Logger(subsystem: "nimmersatt", category: "app").error("autostart: \(error.localizedDescription)")
+                    }
+                    autostart = SMAppService.mainApp.status == .enabled
                 }
-                autostart = SMAppService.mainApp.status == .enabled
+                Action(title: root == .requiresApproval ? "Approve root disk details…" : "Root disk details",
+                       checked: root == .enabled, action: toggleRoot)
             }
-            Action(title: root == .requiresApproval ? "Approve root disk details…" : "Root disk details",
-                   checked: root == .enabled, action: toggleRoot)
             Action(title: "Quit Nimmersatt") { NSApp.terminate(nil) }
         }
         .monospacedDigit()
