@@ -146,7 +146,7 @@ final class Sampler {
             let key = "root:\(p.name)"
             var group = groups[key] ?? AppUsage(id: key, name: daemonNames[p.name]?.name ?? p.name,
                                                 symbol: daemonNames[p.name]?.symbol ?? "gearshape.fill",
-                                                process: daemonNames[p.name] == nil ? "" : p.name)
+                                                process: daemonNames[p.name].map { $0.name.replacingOccurrences(of: " ", with: "") == p.name } ?? true ? "" : p.name)
             group.cpu += p.cpu
             group.memory += p.memory
             group.gpu += gpu[p.pid] ?? 0
