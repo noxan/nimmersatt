@@ -307,7 +307,7 @@ private struct WindowFit: NSViewRepresentable {
 struct Panel: View {
     let state: Snapshot
     @State var expanded = false
-    @State private var settings = false
+    @State private var settings = RootHelper.status == .requiresApproval
     @State private var autostart = SMAppService.mainApp.status == .enabled
     @State private var root = RootHelper.status
 
@@ -363,7 +363,7 @@ struct Panel: View {
                 }
                 if blind {
                     Button(action: toggleRoot) {
-                        Row(symbol: "lock.shield", name: "Root access", value: "Enable", detail: "Read-only disk counters")
+                        Row(symbol: "lock.shield", name: "Root access", value: "Enable", detail: "See which root process, read-only")
                     }.buttonStyle(.plain)
                 }
                 Spacer().frame(height: 4)
@@ -400,7 +400,10 @@ struct Panel: View {
                     autostart = SMAppService.mainApp.status == .enabled
                 }
                 Action(title: root == .requiresApproval ? "Approve root disk details…" : "Root disk details",
-                       checked: root == .enabled, action: toggleRoot)
+                       checked: root == .enabled,
+                       caption: root == .requiresApproval ? "Approve in System Settings → Login Items."
+                           : root == .enabled ? nil : "Name the root process using the disk, like Time Machine.",
+                       action: toggleRoot)
             }
             Action(title: "Quit Nimmersatt") { NSApp.terminate(nil) }
         }
@@ -420,6 +423,7 @@ struct Panel: View {
     private func toggleRoot() {
         if RootHelper.enabled { RootHelper.disable() } else { RootHelper.enable() }
         root = RootHelper.status
+        if root == .requiresApproval { settings = true }  // show where approval is pending
     }
 
     private func contributor(_ symbol: String, _ score: Int, _ fact: String) -> some View {
@@ -508,13 +512,19 @@ struct Action: View {
     let title: String
     var expanded: Bool?  // non-nil draws a disclosure chevron
     var checked: Bool?  // non-nil draws a checkmark when true
+    var caption: String?  // one line of explanation under the title
     let action: () -> Void
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
             HStack {
-                Text(title)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title)
+                    if let caption {
+                        Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                }
                 Spacer()
                 if let expanded {
                     Image(systemName: "chevron.right")
